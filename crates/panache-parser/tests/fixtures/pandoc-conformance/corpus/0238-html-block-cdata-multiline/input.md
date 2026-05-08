@@ -1,0 +1,4 @@
+<![CDATA[
+Multi
+line
+]]>

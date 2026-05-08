@@ -1,0 +1,29 @@
+---
+source: crates/panache-parser/tests/golden_parser_cases.rs
+expression: cst_output
+---
+DOCUMENT@0..47
+  PARAGRAPH@0..16
+    TEXT@0..15 "<!DOCTYPE html>"
+    NEWLINE@15..16 "\n"
+  BLANK_LINE@16..17
+    BLANK_LINE@16..17 "\n"
+  PARAGRAPH@17..47
+    TEXT@17..18 "<"
+    UNRESOLVED_REFERENCE@18..45
+      IMAGE_LINK_START@18..20
+        IMAGE_LINK_START@18..20 "!["
+      IMAGE_ALT@20..44
+        TEXT@20..25 "CDATA"
+        UNRESOLVED_REFERENCE@25..44
+          LINK_START@25..26
+            LINK_START@25..26 "["
+          LINK_TEXT@26..43
+            TEXT@26..32 "hello "
+            INLINE_HTML@32..37
+              INLINE_HTML_CONTENT@32..37 "<not>"
+            TEXT@37..43 " world"
+          TEXT@43..44 "]"
+      TEXT@44..45 "]"
+    TEXT@45..46 ">"
+    NEWLINE@46..47 "\n"

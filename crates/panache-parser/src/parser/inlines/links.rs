@@ -36,11 +36,26 @@ use crate::parser::utils::attributes::try_parse_trailing_attributes;
 ///   outer match is rejected so the inner-most definition is used instead
 ///   (spec examples #518–#520, #532). Pandoc-markdown allows nested links,
 ///   so the flag is `false` there.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct LinkScanContext {
     pub skip_raw_html: bool,
     pub skip_autolinks: bool,
     pub disallow_inner_links: bool,
+    /// Dialect controlling which HTML constructs the raw-HTML opacity check
+    /// recognizes. Pandoc-markdown excludes bare declarations and CDATA
+    /// from its inline raw HTML grammar.
+    pub dialect: crate::options::Dialect,
+}
+
+impl Default for LinkScanContext {
+    fn default() -> Self {
+        Self {
+            skip_raw_html: false,
+            skip_autolinks: false,
+            disallow_inner_links: false,
+            dialect: crate::options::Dialect::Pandoc,
+        }
+    }
 }
 
 impl LinkScanContext {
@@ -50,6 +65,7 @@ impl LinkScanContext {
             skip_raw_html: config.extensions.raw_html,
             skip_autolinks: config.extensions.autolinks && is_commonmark,
             disallow_inner_links: is_commonmark,
+            dialect: config.dialect,
         }
     }
 }
@@ -101,7 +117,7 @@ fn find_link_close_bracket(text: &str, start: usize, ctx: LinkScanContext) -> Op
                 {
                     i += len;
                 } else if ctx.skip_raw_html
-                    && let Some(len) = try_parse_inline_html(&text[i..])
+                    && let Some(len) = try_parse_inline_html(&text[i..], ctx.dialect)
                 {
                     i += len;
                 } else {
@@ -233,7 +249,7 @@ fn link_text_contains_inner_link(text: &str, ctx: LinkScanContext, strict_dest: 
                 {
                     i += len;
                 } else if ctx.skip_raw_html
-                    && let Some(len) = try_parse_inline_html(&text[i..])
+                    && let Some(len) = try_parse_inline_html(&text[i..], ctx.dialect)
                 {
                     i += len;
                 } else {

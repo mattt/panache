@@ -15,18 +15,38 @@
 //! and the renderer must skip the standard text-token escaping for
 //! `INLINE_HTML` nodes.
 
+use crate::options::Dialect;
 use crate::syntax::SyntaxKind;
 use rowan::GreenNodeBuilder;
 
 /// Try to match an inline raw HTML span starting at `text[0]`.
 /// Returns the length in bytes consumed, or `None` if no match.
-pub fn try_parse_inline_html(text: &str) -> Option<usize> {
+///
+/// `dialect` controls whether bare HTML declarations (`<!DOCTYPE …>`,
+/// `<!ENTITY …>`) and CDATA sections (`<![CDATA[…]]>`) are recognized
+/// as raw HTML. Pandoc-markdown does not treat these as raw inline
+/// HTML — the bytes fall through to plain text. CommonMark dialect
+/// recognizes them per CommonMark §6.6.
+pub fn try_parse_inline_html(text: &str, dialect: Dialect) -> Option<usize> {
     if !text.starts_with('<') {
         return None;
     }
+    let cdata_decl_allowed = dialect == Dialect::CommonMark;
     parse_html_comment(text)
-        .or_else(|| parse_cdata(text))
-        .or_else(|| parse_declaration(text))
+        .or_else(|| {
+            if cdata_decl_allowed {
+                parse_cdata(text)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            if cdata_decl_allowed {
+                parse_declaration(text)
+            } else {
+                None
+            }
+        })
         .or_else(|| parse_processing_instruction(text))
         .or_else(|| parse_close_tag(text))
         .or_else(|| parse_open_tag(text))
@@ -248,18 +268,48 @@ mod tests {
     use super::*;
 
     fn matches(input: &str, expected_len: usize) {
+        // CommonMark dialect: full CommonMark §6.6 recognition (incl. CDATA
+        // and declarations). The byte-level recognizer assertions below
+        // are dialect-shared except for `cdata` and `declaration`, which
+        // are CommonMark-only and use `matches_cm` explicitly.
         assert_eq!(
-            try_parse_inline_html(input),
+            try_parse_inline_html(input, Dialect::CommonMark),
             Some(expected_len),
-            "expected {input:?} to match {expected_len}",
+            "expected {input:?} to match {expected_len} under CommonMark",
+        );
+        assert_eq!(
+            try_parse_inline_html(input, Dialect::Pandoc),
+            Some(expected_len),
+            "expected {input:?} to match {expected_len} under Pandoc",
+        );
+    }
+
+    fn matches_cm(input: &str, expected_len: usize) {
+        assert_eq!(
+            try_parse_inline_html(input, Dialect::CommonMark),
+            Some(expected_len),
+            "expected {input:?} to match {expected_len} under CommonMark",
         );
     }
 
     fn no_match(input: &str) {
         assert_eq!(
-            try_parse_inline_html(input),
+            try_parse_inline_html(input, Dialect::CommonMark),
             None,
-            "expected no match for {input:?}"
+            "expected no match for {input:?} under CommonMark",
+        );
+        assert_eq!(
+            try_parse_inline_html(input, Dialect::Pandoc),
+            None,
+            "expected no match for {input:?} under Pandoc",
+        );
+    }
+
+    fn no_match_pandoc(input: &str) {
+        assert_eq!(
+            try_parse_inline_html(input, Dialect::Pandoc),
+            None,
+            "expected no match for {input:?} under Pandoc dialect",
         );
     }
 
@@ -314,12 +364,19 @@ mod tests {
 
     #[test]
     fn cdata() {
-        matches("<![CDATA[a]]>", 13);
+        matches_cm("<![CDATA[a]]>", 13);
+        // Pandoc-markdown does not recognize bare CDATA as inline raw HTML.
+        no_match_pandoc("<![CDATA[a]]>");
     }
 
     #[test]
     fn declaration() {
-        matches("<!ELEMENT br EMPTY>", 19);
+        matches_cm("<!ELEMENT br EMPTY>", 19);
+        matches_cm("<!DOCTYPE html>", 15);
+        // Pandoc-markdown does not recognize bare declarations as inline
+        // raw HTML — the bytes fall through to plain text.
+        no_match_pandoc("<!ELEMENT br EMPTY>");
+        no_match_pandoc("<!DOCTYPE html>");
     }
 
     #[test]

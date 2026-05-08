@@ -1,0 +1,8 @@
+[ Para
+    [ Str "<![CDATA["
+    , SoftBreak
+    , Str "Multi"
+    , SoftBreak
+    , Str "line]]>"
+    ]
+]

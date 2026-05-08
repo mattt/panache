@@ -533,7 +533,7 @@ pub(super) fn build_ir_into(
                 continue;
             }
             if exts.raw_html
-                && let Some(len) = try_parse_inline_html(&text[pos..])
+                && let Some(len) = try_parse_inline_html(&text[pos..], config.dialect)
                 && pos + len <= end
             {
                 flush_text!();

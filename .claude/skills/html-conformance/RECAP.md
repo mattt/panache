@@ -11,7 +11,150 @@ reverted, what trap to avoid) are the load-bearing content here.
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-08 (Phase 4 — comments + processing instructions corpus pin)
+## Latest session — 2026-05-08 (Phase 4 follow-up — gate type-4/type-5 HTML blocks under Pandoc dialect)
+
+**html (block + inline) pass count: 39 → 47** (8 new corpus cases,
+all passing).
+**Workspace test count: 0 failing → 0 failing** (all green).
+
+### What landed
+
+Phase 4 follow-up gates HTML-block **types 4 (declaration) and 5
+(CDATA)** off under `Dialect::Pandoc`, both at the block-level
+recognizer and the inline raw-HTML recognizer. CommonMark dialect
+keeps current behavior: bare `<!DOCTYPE html>` and `<![CDATA[…]]>`
+still emit `RawBlock`. Under Pandoc, the bytes fall through to
+paragraph parsing, matching `pandoc -f markdown -t native`:
+
+- `<!DOCTYPE html>` → `Para [Str "<!DOCTYPE", Space, Str "html>"]`
+- `<![CDATA[hello <not> world]]>` →
+  `Para [Str "<![CDATA[hello", Space, RawInline (Format "html") "<not>", Space, Str "world]]>"]`
+
+Two recognizer changes:
+
+1. **Block-level**
+   (`crates/panache-parser/src/parser/blocks/html_blocks.rs::try_parse_html_block_start`):
+   `Declaration` and `CData` arms now gated on `is_commonmark`. They
+   no longer match under Pandoc, so the block dispatcher falls
+   through to paragraph parsing.
+2. **Inline-level**
+   (`crates/panache-parser/src/parser/inlines/inline_html.rs::try_parse_inline_html`):
+   added a `dialect: Dialect` parameter. Internally, `parse_cdata`
+   and `parse_declaration` are skipped under Pandoc; `parse_html_comment`,
+   `parse_processing_instruction`, `parse_close_tag`, and
+   `parse_open_tag` always run. Comments + PIs continue to project
+   as RawInline under Pandoc, matching pandoc-native.
+
+`LinkScanContext` (in `parser/inlines/links.rs`) gained a `dialect`
+field so its bracket-skip path uses the right recognizer when a
+link's text contains `<!DOCTYPE …>`-like bytes (extremely rare in
+real input, but consistent now).
+
+Three call sites updated to pass the dialect:
+- `parser/inlines/core.rs:1208` (main inline dispatcher, IR-fallback path)
+- `parser/inlines/links.rs:120` and `:252` (link text scanning, bracket close)
+- `parser/inlines/inline_ir.rs:536` (inline IR builder)
+
+### What Phase 4 follow-up still does NOT do
+
+- **CommonMark type-4 lowercase recognition.** CommonMark spec says
+  type-4 starts with `<!` followed by **any** ASCII letter; panache's
+  block recognizer still requires uppercase. Pandoc-CommonMark agrees
+  with the spec (`pandoc -f commonmark` recognizes `<!doctype html>`
+  as RawBlock). This is a pre-existing CommonMark gap not exercised
+  by the new corpus and out of Phase 4 scope. Note: the inline path
+  is fine — both dialects of CommonMark handle the lowercase form
+  via `parse_declaration` (which uses `is_ascii_alphabetic`).
+- **Phase 5 / 6 work** for `markdown_in_html_blocks` on non-sectioning
+  block tags (`<table>`, `<tr>`, `<td>`, `<dl>`, `<ul>` etc.) — same
+  gap as noted in the previous Phase 3/4 sessions. Highest-impact
+  remaining target.
+
+### Files in committable diff
+
+- `crates/panache-parser/src/parser/blocks/html_blocks.rs` (block
+  gate + 2 unit tests updated to pass dialect explicitly)
+- `crates/panache-parser/src/parser/inlines/inline_html.rs` (added
+  `dialect: Dialect` parameter, gated `parse_cdata` /
+  `parse_declaration`, expanded internal tests with `matches_cm` /
+  `no_match_pandoc` helpers)
+- `crates/panache-parser/src/parser/inlines/core.rs` (1 call site)
+- `crates/panache-parser/src/parser/inlines/links.rs`
+  (`LinkScanContext` gained `dialect`; 2 call sites)
+- `crates/panache-parser/src/parser/inlines/inline_ir.rs` (1 call site)
+- `crates/panache-parser/tests/fixtures/cases/html_block_doctype_pandoc/`
+  + `_commonmark/` paired parser fixtures (+ snapshots)
+- `crates/panache-parser/tests/golden_parser_cases.rs` (2 new case
+  registrations)
+- 8 new conformance corpus directories under
+  `crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/`:
+  - `0233-html-block-doctype-plain` — `<!DOCTYPE html>`
+  - `0234-html-block-doctype-lowercase` — `<!doctype html>`
+  - `0235-html-block-doctype-between-paras` — DOCTYPE between paras
+  - `0236-html-block-cdata-plain` — `<![CDATA[content]]>`
+  - `0237-html-block-cdata-with-html` — CDATA containing `<not>`
+    raw HTML (RawInline lifted inside the Para)
+  - `0238-html-block-cdata-multiline` — CDATA spanning soft breaks
+  - `0239-html-inline-doctype-mid-para` — DOCTYPE inside a Para
+  - `0240-html-inline-cdata-mid-para` — CDATA inside a Para
+- `crates/panache-parser/tests/pandoc/allowlist.txt` (8 new ids
+  under two new section headers)
+- `crates/panache-parser/tests/pandoc/report.txt` +
+  `docs/development/pandoc-report.json` (regenerated; pass rate
+  231/232 → 239/240).
+
+### Suggested next sub-targets, ranked
+
+1. **Phase 5 / 6 — `markdown_in_html_blocks` for non-sectioning
+   block tags.** Highest-impact remaining gap. Pandoc default
+   parses markdown inside *most* HTML block tags except the four
+   verbatim ones; panache currently silently drops content inside
+   `<table>/<tr>/<td>/<dl>/<dt>/<dd>/<ul>/<ol>/<li>/<form>` (see
+   probe in earlier RECAP entry). Fix in
+   `parser/blocks/html_blocks.rs` — split HTML-block scanning so
+   each balanced tag pair emits a separate `HTML_BLOCK` and
+   intermediate content is fed back to the block dispatcher. Add
+   ~6-10 corpus cases.
+2. **Phase 5 (nested div, blocked.txt id 199)** — depth-aware
+   pre-scan. Same machinery needed for #1; could ride along.
+3. **CommonMark type-4 lowercase gap.** Tighten the upper-case-only
+   gate in `try_parse_html_block_start` to `is_ascii_alphabetic` so
+   CommonMark dialect matches the spec (`<!doctype html>`). Probably
+   a 5-line change; verify with a paired fixture and the existing
+   commonmark corpus.
+
+### Don't redo / known traps (new this session)
+
+- **`try_parse_inline_html` now takes a `dialect: Dialect` param.**
+  Any new inline-recognizer call site must pass dialect from its
+  closest config/options scope. The compile errors guide you:
+  `core.rs` has `config.dialect`; `inline_ir.rs` has `config.dialect`
+  (don't fall for `is_commonmark`-only); `links.rs` uses
+  `LinkScanContext.dialect` (already populated by
+  `LinkScanContext::from_options`).
+- **`LinkScanContext::Default` had to grow a `dialect`.** I picked
+  `Dialect::Pandoc` as the default since that's what `for_flavor`
+  returns for the default `Flavor::Pandoc`. If anyone constructs
+  `LinkScanContext::default()` and then tries to use it for raw-HTML
+  scanning under CommonMark, they'll silently get the Pandoc-only
+  recognizer. Always derive via `from_options(config)` in real code.
+- **The Pandoc CST for `<![CDATA[hello <not> world]]>` contains an
+  `UNRESOLVED_REFERENCE` shape** (the `[hello <not> world]` segment
+  matches the bracket grammar; lookup fails; flattens to Str via the
+  projector). This is not a bug — the projector correctly emits the
+  matching pandoc-native shape. If you find yourself trying to
+  "fix" the CST to avoid UNRESOLVED_REFERENCE here, don't — the
+  bracket-shape is genuinely ambiguous in this byte stream and the
+  resolver gets the right answer.
+- **`<!ENTITY x "y">`-style declarations would diverge** from
+  pandoc-native because pandoc emits `Quoted DoubleQuote [Str "y"]`
+  for `"y"` while panache emits `Str "\"y\">"`. This is a separate
+  smart_punctuation / Quoted feature gap, not part of the
+  type-4/type-5 work. Don't add `<!ENTITY x "y">` as a corpus case.
+
+--------------------------------------------------------------------------------
+
+## Earlier session — 2026-05-08 (Phase 4 — comments + processing instructions corpus pin)
 
 **html (block + inline) pass count: 27 → 39** (12 new corpus cases,
 all passing, no code change required).

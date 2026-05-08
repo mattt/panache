@@ -130,13 +130,19 @@ pub(crate) fn try_parse_html_block_start(
         return Some(HtmlBlockType::ProcessingInstruction);
     }
 
-    // CDATA section
-    if trimmed.starts_with("<![CDATA[") {
+    // CDATA section — CommonMark dialect only. Pandoc-markdown does not
+    // recognize bare CDATA as a raw HTML block; the literal bytes fall
+    // through to paragraph parsing (`<![CDATA[` becomes Str, the inner
+    // text is parsed as inline markdown, etc).
+    if is_commonmark && trimmed.starts_with("<![CDATA[") {
         return Some(HtmlBlockType::CData);
     }
 
-    // Declaration (DOCTYPE, etc.)
-    if trimmed.starts_with("<!") && trimmed.len() > 2 {
+    // Declaration (DOCTYPE, etc.) — CommonMark dialect only. Pandoc-markdown
+    // does not recognize bare declarations as raw HTML blocks (its
+    // `htmlBlock` reader uses `htmlTag isBlockTag`, which only matches
+    // tag-shaped blocks); the bytes fall through to paragraph parsing.
+    if is_commonmark && trimmed.starts_with("<!") && trimmed.len() > 2 {
         let after_bang = &trimmed[2..];
         if after_bang.chars().next()?.is_ascii_uppercase() {
             return Some(HtmlBlockType::Declaration);
@@ -594,17 +600,27 @@ mod tests {
 
     #[test]
     fn test_try_parse_declaration() {
+        // CommonMark dialect recognizes declarations as type-4 HTML blocks.
         assert_eq!(
-            try_parse_html_block_start("<!DOCTYPE html>", false),
+            try_parse_html_block_start("<!DOCTYPE html>", true),
             Some(HtmlBlockType::Declaration)
         );
+        // Pandoc dialect does not — bare declarations fall through to
+        // paragraph parsing.
+        assert_eq!(try_parse_html_block_start("<!DOCTYPE html>", false), None);
     }
 
     #[test]
     fn test_try_parse_cdata() {
+        // CommonMark dialect recognizes CDATA as type-5 HTML blocks.
+        assert_eq!(
+            try_parse_html_block_start("<![CDATA[content]]>", true),
+            Some(HtmlBlockType::CData)
+        );
+        // Pandoc dialect does not.
         assert_eq!(
             try_parse_html_block_start("<![CDATA[content]]>", false),
-            Some(HtmlBlockType::CData)
+            None
         );
     }
 

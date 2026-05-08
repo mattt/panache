@@ -1,0 +1,8 @@
+[ Para
+    [ Str "See"
+    , Space
+    , Str "<![CDATA[hello]]>"
+    , Space
+    , Str "there."
+    ]
+]

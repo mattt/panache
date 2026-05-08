@@ -1,0 +1,10 @@
+[ Para
+    [ Str "See"
+    , Space
+    , Str "<!DOCTYPE"
+    , Space
+    , Str "html>"
+    , Space
+    , Str "here."
+    ]
+]

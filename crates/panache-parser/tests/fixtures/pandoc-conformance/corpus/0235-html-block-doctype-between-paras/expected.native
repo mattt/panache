@@ -1,0 +1,4 @@
+[ Para [ Str "Before." ]
+, Para [ Str "<!DOCTYPE" , Space , Str "html>" ]
+, Para [ Str "After." ]
+]

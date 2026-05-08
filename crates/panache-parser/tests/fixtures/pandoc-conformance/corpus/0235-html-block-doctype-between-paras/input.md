@@ -1,0 +1,5 @@
+Before.
+
+<!DOCTYPE html>
+
+After.

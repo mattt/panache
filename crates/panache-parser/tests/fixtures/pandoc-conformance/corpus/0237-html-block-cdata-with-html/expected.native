@@ -1,0 +1,8 @@
+[ Para
+    [ Str "<![CDATA[hello"
+    , Space
+    , RawInline (Format "html") "<not>"
+    , Space
+    , Str "world]]>"
+    ]
+]

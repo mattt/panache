@@ -1205,7 +1205,7 @@ fn parse_inline_range_impl(
         // <span>…</span> wrapper) since all three start with `<`.
         if byte == b'<'
             && config.extensions.raw_html
-            && let Some(len) = try_parse_inline_html(&text[pos..])
+            && let Some(len) = try_parse_inline_html(&text[pos..], config.dialect)
         {
             if pos > text_start {
                 builder.token(SyntaxKind::TEXT.into(), &text[text_start..pos]);
