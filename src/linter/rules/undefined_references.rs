@@ -329,6 +329,29 @@ mod tests {
     }
 
     #[test]
+    fn accepts_quarto_crossref_to_display_math_attribute_no_blank_line() {
+        // `$$...$$ {#eq-id}\n@eq-id` (no blank line after the closing fence)
+        // should still register the equation id and resolve the reference.
+        let input = "$$\na = b\n$$ {#eq-primal-problem}\n@eq-primal-problem\n";
+        let mut config = Config {
+            flavor: Flavor::Quarto,
+            extensions: crate::config::Extensions::for_flavor(Flavor::Quarto),
+            ..Default::default()
+        };
+        config.extensions.quarto_crossrefs = true;
+        let tree = crate::parser::parse(input, Some(config.clone()));
+        let rule = UndefinedReferencesRule;
+        let diagnostics = rule.check(&tree, input, &config, None);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.code != "undefined-reference-label"),
+            "@eq-primal-problem should resolve via $$...$${{#eq-id}} on the same line, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
     fn accepts_quarto_crossref_to_chunk_label() {
         let input = "See @fig-plot.\n\n```{r}\n#| label: fig-plot\nplot(1:10)\n```\n";
         let mut config = Config {

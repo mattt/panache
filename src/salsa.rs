@@ -1930,6 +1930,68 @@ mod tests {
     }
 
     #[test]
+    fn symbol_usage_index_collects_table_caption_id_for_crossref() {
+        let db = SalsaDb::default();
+        let mut cfg = crate::Config {
+            flavor: crate::config::Flavor::Quarto,
+            extensions: crate::config::Extensions::for_flavor(crate::config::Flavor::Quarto),
+            ..Default::default()
+        };
+        cfg.extensions.quarto_crossrefs = true;
+        let input = "@tbl-glm\n\n  | Model |\n  | :---- |\n  | A     |\n\n  : {#tbl-glm}\n";
+        let tree = crate::parse(input, Some(cfg.clone()));
+        let index = symbol_usage_index_from_tree(&db, &tree, &cfg.extensions);
+
+        assert_eq!(
+            index.crossref_declarations("tbl-glm").map(|v| v.len()),
+            Some(1),
+            "table caption attribute should register a crossref declaration"
+        );
+        let value_ranges = index
+            .crossref_declaration_value_ranges("tbl-glm")
+            .expect("crossref declaration value range");
+        assert_eq!(value_ranges.len(), 1);
+        let range = value_ranges[0];
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(&input[start..end], "tbl-glm");
+        assert_eq!(index.crossref_usages("tbl-glm").map(|v| v.len()), Some(1));
+    }
+
+    #[test]
+    fn symbol_usage_index_collects_display_math_id_no_blank_line() {
+        let db = SalsaDb::default();
+        let mut cfg = crate::Config {
+            flavor: crate::config::Flavor::Quarto,
+            extensions: crate::config::Extensions::for_flavor(crate::config::Flavor::Quarto),
+            ..Default::default()
+        };
+        cfg.extensions.quarto_crossrefs = true;
+        let input = "$$\na = b\n$$ {#eq-primal-problem}\n@eq-primal-problem\n";
+        let tree = crate::parse(input, Some(cfg.clone()));
+        let index = symbol_usage_index_from_tree(&db, &tree, &cfg.extensions);
+
+        assert_eq!(
+            index
+                .crossref_declarations("eq-primal-problem")
+                .map(|v| v.len()),
+            Some(1)
+        );
+        let value_ranges = index
+            .crossref_declaration_value_ranges("eq-primal-problem")
+            .expect("crossref declaration value range");
+        assert_eq!(value_ranges.len(), 1);
+        let range = value_ranges[0];
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(&input[start..end], "eq-primal-problem");
+        assert_eq!(
+            index.crossref_usages("eq-primal-problem").map(|v| v.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn symbol_usage_index_collects_heading_ranges_for_links_and_ids() {
         let db = SalsaDb::default();
         let tree = crate::parse(
