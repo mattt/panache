@@ -1074,14 +1074,20 @@ fn parse_inline_range_impl(
                     dollar_count
                 );
 
-                // Check for trailing attributes (Quarto cross-reference support)
+                // Check for trailing attributes (Quarto cross-reference support).
+                // The Quarto attribute block sits on the same line as the closing
+                // `$$`, so scope the lookup to the current line — otherwise
+                // anything on later lines (e.g. a following `@eq-id` reference)
+                // makes the segment not end with `}` and the lift no-ops.
                 let after_math = &text[pos + len..];
+                let line_end = after_math.find('\n').unwrap_or(after_math.len());
+                let line_segment = &after_math[..line_end];
                 let attr_len = if config.extensions.quarto_crossrefs {
                     use crate::parser::utils::attributes::try_parse_trailing_attributes;
-                    if let Some((_attr_block, _)) = try_parse_trailing_attributes(after_math) {
-                        let trimmed_after = after_math.trim_start();
+                    if let Some((_attr_block, _)) = try_parse_trailing_attributes(line_segment) {
+                        let trimmed_after = line_segment.trim_start();
                         if let Some(open_brace_pos) = trimmed_after.find('{') {
-                            let ws_before_brace = after_math.len() - trimmed_after.len();
+                            let ws_before_brace = line_segment.len() - trimmed_after.len();
                             let attr_text_len = trimmed_after[open_brace_pos..]
                                 .find('}')
                                 .map(|close| close + 1)

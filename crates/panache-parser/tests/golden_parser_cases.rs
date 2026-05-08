@@ -225,6 +225,7 @@ golden_test_cases!(
     empty_list_marker_blank_then_content_pandoc,
     equation_attributes,
     equation_attributes_disabled,
+    equation_attributes_no_blank_line,
     equation_attributes_single_line,
     escapes,
     fence_interrupts_blockquote_paragraph_commonmark,
