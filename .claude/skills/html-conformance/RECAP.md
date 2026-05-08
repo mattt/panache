@@ -11,7 +11,142 @@ reverted, what trap to avoid) are the load-bearing content here.
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-08 (Phase 2 — `<span>` inline lift)
+## Latest session — 2026-05-08 (Phase 3 — sectioning + verbatim negative-space pin)
+
+**html (block + inline) pass count: 17 → 27** (10 new corpus cases,
+all passing, no code change required).
+**Workspace test count: 0 failing → 0 failing** (all green).
+
+### What landed
+
+Phase 3 is **pure corpus expansion** — every panache CST shape and
+projector arm needed for these cases already existed. The 10 cases
+just pin the behavior so future regressions are caught.
+
+Added 10 corpus directories under
+`crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/`:
+
+- `0211-html-block-section-plain` — `<section>...</section>`
+- `0212-html-block-article-plain` — `<article>...</article>`
+- `0213-html-block-aside-plain` — `<aside>...</aside>`
+- `0214-html-block-nav-plain` — `<nav>...</nav>`
+- `0215-html-block-section-with-attrs` —
+  `<section class="intro">...</section>`
+- `0216-html-block-pre-blocks-markdown` — `<pre>` with
+  markdown-looking body (`# Not a heading`, `*not emph*`); pandoc
+  emits one opaque RawBlock, **explicit spec exception** to
+  `markdown_in_html_blocks` (see `assets/pandoc-spec/raw-html.md:55-56`).
+- `0217-html-block-style-plain` — `<style>...</style>`
+- `0218-html-block-script-plain` — `<script>...</script>`
+- `0219-html-block-textarea-plain` — `<textarea>...</textarea>`
+- `0220-html-block-script-with-attrs` —
+  `<script type="text/javascript">...</script>`
+
+Sectioning tags emit a 3-block sequence
+(`RawBlock "<section>"`, `Plain [...]`, `RawBlock "</section>"`),
+matching pandoc-native — the open/close tags are NOT lifted into a
+wrapper; inner body **is** parsed as markdown. This is type-6
+HTML-block behavior and panache already gets it right.
+
+Verbatim tags (`<pre>/<style>/<script>/<textarea>`) emit a single
+opaque RawBlock containing the full open+body+close — no markdown
+parsing inside, matching pandoc-native and the spec exception.
+
+### What Phase 3 still does NOT do
+
+- **The bigger `markdown_in_html_blocks` story** for non-sectioning,
+  non-verbatim block tags (e.g. `<table>`, `<tr>`, `<td>`, `<dl>`).
+  Pandoc-native breaks each tag into its own `RawBlock "html"` and
+  parses surrounding markdown; panache currently groups the whole
+  construct into one opaque `HTML_BLOCK` and **drops the inner
+  per-tag content**. Probe:
+  ```
+  printf '<table>\n<tr>\n<td>*one*</td>\n</tr>\n</table>\n' \
+    | cargo run -- parse --to pandoc-ast
+  ```
+  emits only the wrapping `<table>`/`<tr>`/`</tr>`/`</table>` —
+  the `<td>*one*</td>` line is lost. This is a bigger Phase 5-class
+  parser-shape gap (split HTML-block scanner so each balanced pair
+  emits a separate `HTML_BLOCK` and content between gets fed back
+  to block parsing). Not addressed here.
+
+- **Plain vs Para promotion divergence**. With blank lines around
+  the inner body (`<section>\n\nfoo\n\n</section>`), pandoc emits
+  Para; panache emits Plain. Same root cause as the
+  `<table>` case — pandoc's recursive block reparse handles
+  blank-line spacing differently. Out of Phase 3 scope.
+
+- **Trailing-close-tag-as-RawBlock**. With nested `<section>` closes
+  followed by a paragraph, pandoc emits the trailing `</section>` as
+  a top-level `RawBlock`; panache wraps it in `Para [ RawInline
+  "</section>" ]`. Same family of issues.
+
+### Files in committable diff
+
+- 10 new corpus directories under
+  `crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/`
+  (each with `input.md` + `expected.native` generated via
+  `pandoc 3.9.0.2 -f markdown -t native`).
+- `crates/panache-parser/tests/pandoc/allowlist.txt` (10 new ids
+  211–220 under new `# html-block (sectioning + verbatim — no
+  markdown inside verbatim, simple cases)` section header).
+- `crates/panache-parser/tests/pandoc/report.txt` +
+  `docs/development/pandoc-report.json` (regenerated; pass rate
+  209/210 → 219/220).
+
+No parser, projector, formatter, or salsa changes — Phase 3 is pure
+negative-space / corpus coverage.
+
+### Suggested next sub-targets, ranked
+
+1. **Phase 5 (or new Phase 6) — `markdown_in_html_blocks` for
+   non-sectioning block tags.** Highest-impact remaining gap. Pandoc
+   default behavior (per `assets/pandoc-spec/raw-html.md:25-61`)
+   parses markdown inside *most* HTML block tags except the four
+   verbatim ones; panache currently silently drops content inside
+   `<table>/<tr>/<td>/<dl>/<dt>/<dd>/<ul>/<ol>/<li>/<form>` etc.
+   when used as raw HTML blocks. The fix likely lives in
+   `parser/blocks/html_blocks.rs` — split HTML-block scanning so
+   each balanced tag pair emits a separate `HTML_BLOCK` and
+   intermediate content is fed back to the block dispatcher. Add
+   ~6-10 corpus cases (`<table>` + cells, `<dl>` + items,
+   `<ul>` + list items, balanced inline-children-of-block).
+2. **Phase 4 — Comments / processing instructions / declarations /
+   CDATA projection.** Pin `RawBlock "html"` / `RawInline "html"`
+   for each. CST is already correct; this is corpus + projector
+   verification, possibly all-passing today.
+3. **Phase 5 (nested div, blocked.txt id 199)** — depth-aware
+   pre-scan in `parser/blocks/html_blocks.rs`. Same machinery
+   needed for #1 above; could ride along.
+
+### Don't redo / known traps (new this session)
+
+- **Plain-vs-Para divergence on blank-line-surrounded sectioning
+  bodies** is a real gap but NOT a Phase 3 case — don't try to
+  shoehorn a corpus case for `<section>\n\nfoo\n\n</section>`
+  that emits Plain on panache and Para on pandoc; it will fail.
+  Save the input pattern for the bigger
+  `markdown_in_html_blocks` work.
+- **Sectioning tags work without code change because pandoc's
+  HTML-block-type-6 already includes them.** The recap for Phase 1
+  / Phase 2 hinted that Phase 3 might "need code" — it does not.
+  All 10 cases passed on the first conformance run. The lift
+  metaphor doesn't apply here: the open/close tags stay raw, only
+  the inner body gets markdown parsing (which it already does).
+- **Verbatim tags' carve-out is spec-explicit**
+  (`assets/pandoc-spec/raw-html.md:55-56`). When the
+  `markdown_in_html_blocks` work in #1 above lands, the tag-name
+  recognizer must NOT recurse into `<script>/<style>/<pre>/
+  <textarea>` bodies. This is type-1 HTML-block behavior in pandoc.
+- **`<table>` + `<td>` content drop is silent.** Panache emits a
+  4-RawBlock sequence (`<table>`, `<tr>`, `</tr>`, `</table>`) and
+  drops the `<td>*one*</td>` lines entirely. No diagnostic. When
+  doing #1 above, write a probe test FIRST that exercises this so
+  the fix has a clear before/after.
+
+--------------------------------------------------------------------------------
+
+## Earlier session — 2026-05-08 (Phase 2 — `<span>` inline lift)
 
 **html (block + inline) pass count: 9 → 17** (8 new corpus cases for
 `html-inline-span`, all passing).

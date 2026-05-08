@@ -1,0 +1,4 @@
+[ RawBlock
+    (Format "html")
+    "<script type=\"text/javascript\">\nvar x = 1;\n</script>"
+]

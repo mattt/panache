@@ -1,0 +1,4 @@
+[ RawBlock (Format "html") "<aside>"
+, Plain [ Str "Hello" , Space , Str "world." ]
+, RawBlock (Format "html") "</aside>"
+]
