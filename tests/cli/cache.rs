@@ -135,3 +135,66 @@ fn test_clean_uses_cache_dir_override() {
         "expected override cache directory to be removed"
     );
 }
+
+#[test]
+fn test_clean_verbose_appends_size_summary() {
+    let temp_dir = TempDir::new().unwrap();
+    let workspace = temp_dir.path().join("workspace");
+    let cache_dir = temp_dir.path().join("custom-cache");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(workspace.join("doc.qmd"), "# Heading\n").unwrap();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(&workspace)
+        .args([
+            "--cache-dir",
+            cache_dir.to_str().unwrap(),
+            "format",
+            "--check",
+            "doc.qmd",
+        ])
+        .assert()
+        .success();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(&workspace)
+        .args([
+            "--verbose",
+            "--cache-dir",
+            cache_dir.to_str().unwrap(),
+            "clean",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Removed cache directory"))
+        .stdout(predicate::str::is_match(r"\(\d+ files?, .+\)").unwrap());
+}
+
+#[test]
+fn test_clean_default_omits_size_summary() {
+    let temp_dir = TempDir::new().unwrap();
+    let workspace = temp_dir.path().join("workspace");
+    let cache_dir = temp_dir.path().join("custom-cache");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(workspace.join("doc.qmd"), "# Heading\n").unwrap();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(&workspace)
+        .args([
+            "--cache-dir",
+            cache_dir.to_str().unwrap(),
+            "format",
+            "--check",
+            "doc.qmd",
+        ])
+        .assert()
+        .success();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(&workspace)
+        .args(["--cache-dir", cache_dir.to_str().unwrap(), "clean"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Removed cache directory"))
+        .stdout(predicate::str::contains(" file").not());
+}

@@ -332,6 +332,63 @@ fn remove_dir_if_exists(path: &Path) -> io::Result<bool> {
     }
 }
 
+/// Walk `path` and return `(file_count, total_bytes)` for every regular file beneath it.
+/// Returns `None` if the directory does not exist. Inaccessible entries are skipped.
+fn summarize_dir(path: &Path) -> io::Result<Option<(usize, u64)>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(err),
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            } else if file_type.is_file()
+                && let Ok(meta) = entry.metadata()
+            {
+                files += 1;
+                bytes = bytes.saturating_add(meta.len());
+            }
+        }
+    }
+    Ok(Some((files, bytes)))
+}
+
+/// Format a byte count using IEC binary units (KiB/MiB/GiB), or plain bytes under 1 KiB.
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    let bytes_f = bytes as f64;
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes_f < KIB * KIB {
+        format!("{:.1} KiB", bytes_f / KIB)
+    } else if bytes_f < KIB * KIB * KIB {
+        format!("{:.2} MiB", bytes_f / (KIB * KIB))
+    } else {
+        format!("{:.2} GiB", bytes_f / (KIB * KIB * KIB))
+    }
+}
+
+fn format_clean_summary(summary: Option<(usize, u64)>) -> String {
+    match summary {
+        Some((files, bytes)) => {
+            let file_word = if files == 1 { "file" } else { "files" };
+            format!(" ({files} {file_word}, {})", format_bytes(bytes))
+        }
+        None => String::new(),
+    }
+}
+
 fn open_cli_cache_best_effort(
     cfg: &panache::Config,
     explicit_config: Option<&Path>,
@@ -1149,13 +1206,26 @@ fn main() -> io::Result<()> {
                 }
             };
 
+            let summarize = |path: &Path| -> io::Result<Option<(usize, u64)>> {
+                if cli.verbose {
+                    summarize_dir(path)
+                } else {
+                    Ok(None)
+                }
+            };
+
             if all {
                 if cfg.cache_dir.is_some() {
                     let cache_dir =
                         resolve_cache_dir_for_cli(&cfg, cli.config.as_deref(), &start_dir)?;
+                    let summary = summarize(&cache_dir)?;
                     let removed = remove_dir_if_exists(&cache_dir)?;
                     if removed {
-                        report_clean(format!("Removed cache directory {}", cache_dir.display()));
+                        report_clean(format!(
+                            "Removed cache directory {}{}",
+                            cache_dir.display(),
+                            format_clean_summary(summary)
+                        ));
                     } else {
                         report_clean(format!(
                             "No cache directory found at {}",
@@ -1163,11 +1233,13 @@ fn main() -> io::Result<()> {
                         ));
                     }
                 } else if let Some(global_base) = global_cache_base_dir() {
+                    let summary = summarize(&global_base)?;
                     let removed = remove_dir_if_exists(&global_base)?;
                     if removed {
                         report_clean(format!(
-                            "Removed all cache buckets at {}",
-                            global_base.display()
+                            "Removed all cache buckets at {}{}",
+                            global_base.display(),
+                            format_clean_summary(summary)
                         ));
                     } else {
                         report_clean(format!(
@@ -1178,9 +1250,14 @@ fn main() -> io::Result<()> {
                 } else {
                     let cache_dir =
                         resolve_cache_dir_for_cli(&cfg, cli.config.as_deref(), &start_dir)?;
+                    let summary = summarize(&cache_dir)?;
                     let removed = remove_dir_if_exists(&cache_dir)?;
                     if removed {
-                        report_clean(format!("Removed cache directory {}", cache_dir.display()));
+                        report_clean(format!(
+                            "Removed cache directory {}{}",
+                            cache_dir.display(),
+                            format_clean_summary(summary)
+                        ));
                     } else {
                         report_clean(format!(
                             "No cache directory found at {}",
@@ -1190,9 +1267,14 @@ fn main() -> io::Result<()> {
                 }
             } else {
                 let cache_dir = resolve_cache_dir_for_cli(&cfg, cli.config.as_deref(), &start_dir)?;
+                let summary = summarize(&cache_dir)?;
                 let removed = remove_dir_if_exists(&cache_dir)?;
                 if removed {
-                    report_clean(format!("Removed cache directory {}", cache_dir.display()));
+                    report_clean(format!(
+                        "Removed cache directory {}{}",
+                        cache_dir.display(),
+                        format_clean_summary(summary)
+                    ));
                 } else {
                     report_clean(format!(
                         "No cache directory found at {}",

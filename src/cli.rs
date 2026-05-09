@@ -109,6 +109,16 @@ pub struct Cli {
     )]
     pub quiet: bool,
 
+    /// Print additional informational output
+    #[arg(short = 'v', long, global = true, help_heading = "Global options")]
+    #[arg(help = "Print additional informational output where supported")]
+    #[arg(
+        long_help = "Print additional informational output where supported. Currently used by \
+        `panache clean` to include a summary of cache size and file count alongside the \
+        \"Removed cache directory\" message. Conflicts with --quiet."
+    )]
+    pub verbose: bool,
+
     /// Ignore all discovered configuration files
     #[arg(long, global = true, help_heading = "Global options")]
     #[arg(help = "Ignore all discovered configuration files")]
