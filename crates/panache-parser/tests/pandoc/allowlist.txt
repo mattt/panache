@@ -304,3 +304,9 @@
 
 # html-block (multi-line div open tag — `<div\n  attrs\n>` with the closing `>` on a separate line; structural HTML_ATTRS exposure across lines so the salsa anchor walk picks up the id)
 268
+
+# html-block (div Plain/Para promotion — last block keeps `Para` only when `</div>` sits at column 0 on its own line; demotes to `Plain` when close is butted to content or sits on an indented line; mirrors pandoc's `markdown_in_html_blocks` recursive parse)
+269
+270
+271
+272

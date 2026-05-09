@@ -1363,7 +1363,6 @@ fn try_div_html_block(content: &str) -> Option<Block> {
     let open_attrs = open_attrs_raw.trim_matches(|c: char| c.is_whitespace() || c == '/');
     let attr = parse_html_attrs(open_attrs);
     let after_open_tag = leading_ws + 4 + close_gt_rel + 1;
-    let multiline = content.as_bytes().get(after_open_tag).copied() == Some(b'\n');
     let trailing_ws = content.as_bytes()[after_open_tag..]
         .iter()
         .rev()
@@ -1375,11 +1374,19 @@ fn try_div_html_block(content: &str) -> Option<Block> {
         return None;
     }
     let close_start = after_open_tag + close_search.len() - "</div>".len();
+    // Pandoc's Plain/Para rule for `<div>` content: the LAST block stays as
+    // `Para` only when the closing `</div>` sits on its own column-0 line
+    // (i.e. the byte immediately before `</div>` is `\n`). When the close
+    // is butted against content (`<div>foo</div>`) or sits on an indented
+    // line (`<div>foo\n   </div>`), the trailing paragraph demotes to
+    // `Plain`. Empty closing — `close_start == 0` — would mean no content
+    // separator, but the open-tag preamble guarantees `close_start > 0`.
+    let close_butted = close_start == 0 || content.as_bytes()[close_start - 1] != b'\n';
     let inner = content[after_open_tag..close_start].trim_matches('\n');
     let mut blocks = parse_pandoc_blocks(inner);
-    if !multiline
-        && blocks.len() == 1
-        && let Block::Para(inlines) = blocks.remove(0)
+    if close_butted
+        && let Some(Block::Para(_)) = blocks.last()
+        && let Some(Block::Para(inlines)) = blocks.pop()
     {
         blocks.push(Block::Plain(inlines));
     }

@@ -11,7 +11,143 @@ reverted, what trap to avoid) are the load-bearing content here.
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-09 (Phase 1 — multi-line `<div>` open-tag structural HTML_ATTRS lift)
+## Latest session — 2026-05-09 (Phase 5 — Plain/Para promotion rule for `<div>` recursive reparse)
+
+**html (block + inline) pass count: 76 → 80** (4 new corpus cases —
+all passing).
+**Workspace test count: 0 failing → 0 failing** (all green).
+**Total pandoc conformance: 268/268 → 272/272 (100.0% → 100.0%)**.
+
+### What landed
+
+Projector-only fix in `try_div_html_block` (`pandoc_ast.rs`). The old
+rule keyed on `multiline = byte_after_open_gt == '\n'` and only
+demoted when `blocks.len() == 1`. Both halves were wrong:
+
+- The signal is whether the *close* `</div>` sits on its own
+  column-0 line, not whether content starts on a fresh line after
+  the open `>`.
+- Demotion applies to the LAST block regardless of how many blocks
+  precede it (probe11: `<div>\nfoo\n\nbar</div>` → `[Para foo,
+  Plain bar]` in pandoc; old logic kept both as Para).
+
+New rule: `close_butted = byte_at(close_start - 1) != '\n'`. When
+`close_butted`, demote the trailing `Para` (if present) to `Plain`;
+otherwise leave blocks as-is. Verified across 16 ad-hoc probes and
+4 new corpus cases:
+
+- `<div>X</div>` (one-liner): Plain ✓
+- `<div>\nX</div>` (close butted to last line): Plain ✓
+- `<div>X\n</div>` (close on own line): Para ✓
+- `<div>X\n   </div>` (close on indented line): Plain ✓
+- `<div>\nfoo\n\nbar</div>` (multi-block, butted close): Para+Plain ✓
+- `<div>trailing\nbody\n</div>` (issue #263 trailing-after-`>` form): Para ✓
+
+### Files in committable diff
+
+- `crates/panache-parser/src/pandoc_ast.rs` — `try_div_html_block`:
+  drop `multiline`, compute `close_butted` from byte before
+  `</div>`, demote trailing `Para` regardless of block count. Net
+  ~10 lines changed.
+- 4 new corpus directories under
+  `crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/`:
+  - `0269-html-block-div-trailing-on-open-with-close-on-own-line`
+    — `<div id="x">trailing\nbody\n</div>` (Para). Pins issue #263
+    "trailing after `>` + close on own line" shape.
+  - `0270-html-block-div-single-line-content-close-on-own-line` —
+    `<div id="x">foo\n</div>` (Para). Simplest "Para preserved by
+    own-line close" case.
+  - `0271-html-block-div-multi-block-with-butted-close` —
+    `<div id="x">\nfoo\n\nbar</div>` (Para+Plain). Demonstrates
+    demotion applies to LAST block only, not all blocks.
+  - `0272-html-block-div-close-on-indented-line` —
+    `<div id="x">a\n   </div>` (Plain). Pins the whitespace-aware
+    edge: indent before close → Plain.
+- `crates/panache-parser/tests/pandoc/allowlist.txt` — new section
+  `# html-block (div Plain/Para promotion ...)` with ids 269..272.
+- `crates/panache-parser/tests/pandoc/report.txt` +
+  `docs/development/pandoc-report.json` (regenerated; 272/272
+  passing, 100%).
+
+No parser, salsa, or formatter logic changes — pure projector +
+corpus.
+
+### Why projector-only
+
+CST shape is unchanged for these inputs — the parser already
+produces `HTML_BLOCK_DIV` with raw `HTML_BLOCK_CONTENT` between the
+open/close `HTML_BLOCK_TAG`s. The bug was purely in how the
+projector reads the boundary between content and close tag to
+decide Plain vs Para. No structural change needed.
+
+### What's still NOT covered
+
+- **`flush_html_block_text` (non-div HTML blocks with intermixed
+  tags)** has its own `trailing_blank = trailing_newlines >= 2`
+  rule that demotes the last Para → Plain when the chunk butts up
+  against the next tag. Different context (inter-tag fragment
+  inside a non-div HTML block, not balanced div content), and the
+  current corpus doesn't exercise the cases where this rule could
+  diverge from pandoc. Defer until evidence.
+- **`<span>` Phase 2** still pending — the inline-side analog of
+  Phase 1. Coordinates with `pandoc-ir-migrate` which already
+  emits a `ConstructKind::PandocOpaque` event for `<span>`; the
+  lift just retags `INLINE_HTML` → `INLINE_HTML_SPAN` for balanced
+  spans under Pandoc. No conformance case forces this yet.
+- **Cross-boundary cite numbering** + **outer-wins-on-conflict for
+  inherited refs/footnotes** — both still deferred (no corpus case
+  exercises them).
+
+### Suggested next sub-targets, ranked
+
+1. **Phase 2 — `<span>` lift.** The inline-side Phase 1 analog. The
+   IR machinery in `inline_ir.rs` already opaque-scans `<span>`;
+   add an `INLINE_HTML_SPAN` retag in
+   `parser/inlines/inline_html.rs` (or wherever the wrapper is
+   emitted) gated on `Dialect::Pandoc`, and reuse `parse_html_attrs`
+   in the projector. Should unlock `<span id="x">…</span>` anchor
+   indexing for the linter just like `<div id>`.
+2. **Phase 5 — projector cleanup.** Now that the Plain/Para rule
+   is correct, audit `try_div_html_block`'s remaining
+   byte-aware close lookahead. Some paths may simplify now that
+   parser-side multi-line + nested + balanced opens all lift
+   structurally. Low risk, low immediate value.
+3. **Phase 5 — `flush_html_block_text` Plain/Para audit.** Same
+   shape of bug may live in the inter-tag fragment path. Add a
+   probe: `<p>foo</p>X<p>bar</p>` etc. and see what pandoc returns
+   vs. panache.
+4. **Outer-wins-on-conflict for inherited refs/footnotes** (still
+   deferred — no corpus exercises it).
+
+### Don't redo / known traps (new this session)
+
+- **The Plain/Para signal is `</div>`-side, not `<div>`-side.**
+  Any logic that keys on whether content starts with `\n` after
+  the open `>` is reading the wrong end. The rule is about how
+  the close tag terminates the recursive parse: column-0 fresh
+  line → Para; butted or indented → Plain.
+- **Demotion applies to the LAST block only.** Earlier blocks in
+  a multi-block div keep their Para shape. The old logic gated on
+  `blocks.len() == 1` and silently no-op'd for multi-block cases,
+  hiding the bug.
+- **`expected.native` whitespace differs from naive panache
+  output, but the harness `normalize_native` collapses it** — when
+  comparing structurally-equivalent outputs side-by-side via
+  `tr -d '\n'`, you'll see noise from "Str \"x\" , Y" vs "Str
+  \"x\", Y" formatting that doesn't reflect a real divergence. Use
+  the harness (or look at the report) for ground truth, not raw
+  string comparison.
+- **`html_block`, `html_div_block`, and `emit_html_block` all
+  strip trailing newlines from `content` before calling
+  `try_div_html_block`** (`while content.ends_with('\n') { pop()
+  }`). That means inside `try_div_html_block`, `</div>` is at the
+  very end of `content`. The byte at `close_start - 1` is the
+  byte immediately preceding `</div>` — which is the signal we
+  need. Don't add your own trailing-newline strip on top.
+
+--------------------------------------------------------------------------------
+
+## Earlier session — 2026-05-09 (Phase 1 — multi-line `<div>` open-tag structural HTML_ATTRS lift)
 
 **html (block + inline) pass count: 75 → 76** (1 new corpus case —
 passing).
