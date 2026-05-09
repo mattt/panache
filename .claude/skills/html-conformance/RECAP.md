@@ -11,7 +11,174 @@ reverted, what trap to avoid) are the load-bearing content here.
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-08 (Phase 5 — depth-aware nested `<div>` close scan)
+## Latest session — 2026-05-09 (Phase 5 — inner-`RefsCtx` for `parse_pandoc_blocks` recursive reparse)
+
+**html (block + inline) pass count: 62 → 72** (10 new corpus cases —
+all passing).
+**Workspace test count: 0 failing → 0 failing** (all green).
+**Total pandoc conformance: 254/254 → 264/264 (100.0% → 100.0%)**.
+
+### What landed
+
+Projector-only fix in `parse_pandoc_blocks`
+(`crates/panache-parser/src/pandoc_ast.rs:1365`): the recursive
+reparse of `<div>...</div>` inner content now builds a fresh
+`RefsCtx` from the inner CST (via existing `build_refs_ctx`), swaps
+it in for the duration of the inner projection, and restores the
+outer `REFS_CTX` after. Three failure modes collapse to one root
+cause and unlock together:
+
+- **Heading auto-ids** inside `<div>` were empty
+  (`Header 1 ("", [], [])` instead of `("heading", [], [])`)
+  because `heading_id_by_offset` is keyed on the *outer* CST's text
+  ranges; the recursive parse produces fresh zero-based offsets that
+  never match.
+- **Reference-link defs** inside `<div>` were swallowed by the
+  inner CST but never resolved (`See [example].` stayed as raw
+  text), because `REFS_CTX.refs` was the outer's empty map.
+- **Footnote references** inside `<div>` (e.g. `text.[^x]`) failed
+  the same way — `REFS_CTX.footnotes` lookup missed.
+
+Cross-boundary id disambiguation (outer `# heading` + inner
+`# heading` should slug to `heading-1`) is an acceptable gap: pandoc
+parses `<div>...</div>` natively in one pass with a document-wide
+seen-ids map, but our recursive boundary is isolated. No corpus case
+exercises this; flagging it for a future session if a real document
+hits it.
+
+### Files in committable diff
+
+- `crates/panache-parser/src/pandoc_ast.rs`
+  — `parse_pandoc_blocks` swaps in inner `RefsCtx`. Net ~10 lines
+  added (mem::take + build_refs_ctx + restore).
+- 10 new corpus directories under
+  `crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/`:
+  - `0255-html-block-div-multi-paragraph` — `Para` then `Para`
+    inside `<div>`
+  - `0256-html-block-div-with-heading` — `# Heading` and
+    `## Subheading` get auto-ids inside `<div>`
+  - `0257-html-block-div-with-ref-link` — `[example]: url` def
+    + `[example]` use both inside `<div>` resolves
+  - `0258-html-block-div-with-footnote` — `[^x]` ref + `[^x]: ...`
+    def both inside `<div>` produces `Note`
+  - `0259-html-block-div-with-blockquote-and-code` — `<div>` with
+    paragraph, blockquote, fenced code block
+  - `0260-html-block-div-with-bullet-and-ordered-list` — both
+    list types inside `<div>`
+  - `0261-html-block-div-with-pipe-table` — `Table` inside `<div>`
+  - `0262-html-block-div-multiline-open-tag` —
+    `<div\n  id=\"x\"\n  class=\"y\">` first-line-only scan still
+    matches when bytes following the close `>` start with `\n`
+  - `0263-html-block-div-with-link-and-image` — Link + auto-figure
+    inside `<div>`
+  - `0264-html-block-div-with-attrs-keyval` — `<div data-key="value"
+    id="x" class="a b">` projects `( "x" , [ "a", "b" ] , [ ( "data-key" , "value" ) ] )`
+- `crates/panache-parser/tests/pandoc/allowlist.txt`
+  — new section `# html-block (div recursive parse — inner heading
+  auto-ids, ref-link defs, footnote defs resolve in inner RefsCtx
+  instead of leaking outer)` with ids 255..264.
+- `crates/panache-parser/tests/pandoc/report.txt` +
+  `docs/development/pandoc-report.json` (regenerated; 264/264
+  passing, 100%).
+
+No parser, salsa, or formatter logic changes — pure projector +
+corpus.
+
+### Why projector-only (not parser-side)
+
+CST shape is unchanged: `<div>` content is still raw TEXT inside
+`HTML_BLOCK_CONTENT`. The fix is purely in how the projector
+*reparses* that text. Parser-side restructuring (parsing inner
+content into structural blocks at parse time) remains a Phase 5
+target but wasn't needed for these gaps — the recursive reparse
+strategy already produces the right shape; it just needed the right
+ref/heading context.
+
+### What's still NOT covered
+
+- **Cross-boundary id disambiguation** — outer + inner heading
+  with identical slug both project as `("heading", [], [])` instead
+  of pandoc's `("heading", ...)` + `("heading-1", ...)`. To match
+  pandoc fully we'd need to thread the outer `seen_ids` into the
+  inner `RefsCtx` build, *and* feed the outer `heading_ids` set so
+  inner duplicates pick up `-N` suffixes. Fixable in
+  `build_refs_ctx` accepting an optional inherited seen-ids map.
+  Not exercised by current corpus.
+- **Cross-boundary ref-link inheritance** — an outer
+  `[outer]: http://...` defined before the `<div>` is not visible
+  to a `[outer]` use inside the `<div>` (inner RefsCtx wipes outer
+  refs). Pandoc's one-pass parse sees both. Same fix shape as
+  above; same lack of corpus coverage. Probably worth a corpus
+  case + targeted refs-merge in a future session.
+- **Cross-boundary footnote-def inheritance** — same story.
+  Pandoc lets a `<div>` body use a footnote defined outside.
+
+### Suggested next sub-targets, ranked
+
+1. **Cross-boundary inheritance for refs/footnotes/seen-ids.**
+   Thread the outer `RefsCtx`'s `refs`, `footnotes`, and
+   `heading_ids`/`seen_ids` into the inner `build_refs_ctx` so
+   recursive reparse matches pandoc on:
+   - Outer `[label]: url` used inside `<div>`.
+   - Outer `[^x]: ...` referenced inside `<div>`.
+   - Outer + inner heading slug collisions disambiguating to
+     `-1`/`-2`.
+   Add 3 corpus cases (one per axis) and tighten `build_refs_ctx`
+   to accept an inherited-context arg.
+2. **Multi-line open tags.** Still falls back to opaque
+   `HTML_BLOCK` when `<div\n  attrs>` spans real lines without the
+   closing `>` on line 1 (case 0262 works because the close `>` is
+   on the same line as the last attribute). The
+   `try_parse_html_block_start` only inspects line 1; teach it to
+   continue scanning until the open tag closes. Edge case;
+   probably low ROI until a real document hits it.
+3. **Projector cleanup.** With case 199 lifting structurally and
+   inner-ctx now correctly seeded, `try_div_html_block`'s legacy
+   byte-aware close lookahead may be safe to simplify. Audit
+   carefully — Phase 5/6 added it for mid-block bare `<div>`
+   handling.
+4. **`<!ENTITY x "y">` Quoted projection gap** still present
+   (smart-quote / Quoted feature; out-of-scope for this skill).
+
+### Don't redo / known traps (new this session)
+
+- **`parse_pandoc_blocks` is called from at least two sites** —
+  `flush_html_block_text` (mid-stream non-tag content within a
+  block-tag splitter) and `try_div_html_block` (whole-`<div>`
+  recursive lift). Both want the inner-ctx semantics, so the swap
+  belongs in `parse_pandoc_blocks` itself, not at the call sites.
+- **`build_refs_ctx` mutates `REFS_CTX` mid-build** (it stages
+  cite-num/example-num maps into the thread-local before the heading
+  pre-pass so footnote bodies can see them — see comment at line
+  139). When swapping, save the outer FIRST (`mem::take`), THEN
+  call `build_refs_ctx`, THEN install the result. Skipping the
+  `mem::take` and just running `build_refs_ctx` would let the inner
+  pre-pass leak into the outer ctx mid-projection.
+- **`fenced_div` does NOT use `parse_pandoc_blocks`.** It walks the
+  existing structural CST via `collect_block`, so fenced-div
+  headings/refs already resolve through the *outer* ctx. The fix
+  here only affects `<div>...</div>` HTML blocks (whose inner is
+  raw TEXT) and any other future caller that reparses arbitrary
+  text. Don't accidentally generalize to fenced divs — would
+  double-build the ctx for no gain.
+- **`heading_id_by_offset` is offset-keyed, NOT slug-keyed.** The
+  outer-ctx-leak symptom looks like "auto-id missing" but the
+  root cause is that the inner CST's offsets are zero-based and
+  don't intersect with the outer's offset space. Tempting wrong
+  fix: copy the outer's `heading_ids` into the inner. That doesn't
+  resolve auto-ids — the inner heading needs its OWN slug computed
+  and registered. The right fix is to *build* an inner ctx, not to
+  share the outer's lookup tables.
+- **Conformance comparison is whitespace-insensitive** —
+  `normalize_native` collapses pandoc's pretty-printed multi-line
+  block output to single-line. So differences between
+  `[ Para [Str "x"] , Para [Str "y"] ]` (panache one-line) and
+  pandoc's vertically-stacked output are not real divergences.
+  Don't be misled by visual diff when probing.
+
+--------------------------------------------------------------------------------
+
+## Earlier session — 2026-05-08 (Phase 5 — depth-aware nested `<div>` close scan)
 
 **html (block + inline) pass count: 57 → 62** (5 new corpus cases —
 1 unblocked + 4 new — all passing).

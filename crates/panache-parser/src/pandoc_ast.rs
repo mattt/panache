@@ -1373,10 +1373,21 @@ fn parse_pandoc_blocks(text: &str) -> Vec<Block> {
         ..crate::ParserOptions::default()
     };
     let doc = crate::parse(text, Some(opts));
+    // Swap REFS_CTX with one built from the inner CST so heading auto-ids,
+    // reference-link defs, and footnote defs inside the recursive parse
+    // resolve against inner offsets/labels rather than the outer document's.
+    // Pandoc itself parses `<div>...</div>` natively in one pass, so its
+    // id-disambiguation is document-wide; here the recursive boundary is
+    // isolated, so cross-boundary slug collisions won't get `-1`/`-2`
+    // suffixes. Acceptable trade-off for the common case.
+    let outer = REFS_CTX.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    let inner_ctx = build_refs_ctx(&doc);
+    REFS_CTX.with(|c| *c.borrow_mut() = inner_ctx);
     let mut out = Vec::new();
     for child in doc.children() {
         collect_block(&child, &mut out);
     }
+    REFS_CTX.with(|c| *c.borrow_mut() = outer);
     out
 }
 

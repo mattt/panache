@@ -1,0 +1,10 @@
+[ Div
+    ( "" , [] , [] )
+    [ Para
+        [ Str "A"
+        , Space
+        , Str "footnote."
+        , Note [ Para [ Str "An" , Space , Str "explanation." ] ]
+        ]
+    ]
+]

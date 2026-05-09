@@ -1,0 +1,8 @@
+[ Div
+    ( "outer" , [] , [] )
+    [ Header 1 ( "heading" , [] , [] ) [ Str "Heading" ]
+    , Para [ Str "Some" , Space , Str "text." ]
+    , Header 2 ( "subheading" , [] , [] ) [ Str "Subheading" ]
+    , Para [ Str "More" , Space , Str "text." ]
+    ]
+]

@@ -1,0 +1,4 @@
+[ Div
+    ( "x" , [] , [] )
+    [ Para [ Str "foo" ] , Para [ Str "bar" ] ]
+]

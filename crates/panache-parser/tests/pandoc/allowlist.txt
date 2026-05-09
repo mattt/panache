@@ -284,3 +284,15 @@
 252
 253
 254
+
+# html-block (div recursive parse — inner heading auto-ids, ref-link defs, footnote defs resolve in inner RefsCtx instead of leaking outer)
+255
+256
+257
+258
+259
+260
+261
+262
+263
+264

@@ -1,0 +1,18 @@
+[ Div
+    ( "" , [ "warning" ] , [] )
+    [ Para
+        [ Str "Note:"
+        , Space
+        , Str "this"
+        , Space
+        , Str "is"
+        , Space
+        , Str "a"
+        , Space
+        , Emph [ Str "warning" ]
+        , Str "."
+        ]
+    , BlockQuote [ Para [ Str "Quoted" , Space , Str "text." ] ]
+    , CodeBlock ( "" , [ "rust" ] , [] ) "fn main() {}"
+    ]
+]

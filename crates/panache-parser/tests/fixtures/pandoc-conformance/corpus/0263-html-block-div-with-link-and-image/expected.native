@@ -1,0 +1,24 @@
+[ Div
+    ( "" , [] , [] )
+    [ Para
+        [ Str "Some"
+        , Space
+        , Link
+            ( "" , [] , [] )
+            [ Str "link" ]
+            ( "http://example.com" , "" )
+        , Space
+        , Str "text."
+        ]
+    , Figure
+        ( "" , [] , [] )
+        (Caption Nothing [ Plain [ Str "image" ] ])
+        [ Plain
+            [ Image
+                ( "" , [] , [] )
+                [ Str "image" ]
+                ( "http://example.com/img.png" , "" )
+            ]
+        ]
+    ]
+]

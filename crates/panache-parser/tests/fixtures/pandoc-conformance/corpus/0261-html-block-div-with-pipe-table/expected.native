@@ -1,0 +1,50 @@
+[ Div
+    ( "" , [] , [] )
+    [ Table
+        ( "" , [] , [] )
+        (Caption Nothing [])
+        [ ( AlignDefault , ColWidthDefault )
+        , ( AlignDefault , ColWidthDefault )
+        ]
+        (TableHead
+           ( "" , [] , [] )
+           [ Row
+               ( "" , [] , [] )
+               [ Cell
+                   ( "" , [] , [] )
+                   AlignDefault
+                   (RowSpan 1)
+                   (ColSpan 1)
+                   [ Plain [ Str "col1" ] ]
+               , Cell
+                   ( "" , [] , [] )
+                   AlignDefault
+                   (RowSpan 1)
+                   (ColSpan 1)
+                   [ Plain [ Str "col2" ] ]
+               ]
+           ])
+        [ TableBody
+            ( "" , [] , [] )
+            (RowHeadColumns 0)
+            []
+            [ Row
+                ( "" , [] , [] )
+                [ Cell
+                    ( "" , [] , [] )
+                    AlignDefault
+                    (RowSpan 1)
+                    (ColSpan 1)
+                    [ Plain [ Str "a" ] ]
+                , Cell
+                    ( "" , [] , [] )
+                    AlignDefault
+                    (RowSpan 1)
+                    (ColSpan 1)
+                    [ Plain [ Str "b" ] ]
+                ]
+            ]
+        ]
+        (TableFoot ( "" , [] , [] ) [])
+    ]
+]

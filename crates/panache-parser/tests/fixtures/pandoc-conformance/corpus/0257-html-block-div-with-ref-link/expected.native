@@ -1,0 +1,13 @@
+[ Div
+    ( "" , [] , [] )
+    [ Para
+        [ Str "See"
+        , Space
+        , Link
+            ( "" , [] , [] )
+            [ Str "example" ]
+            ( "http://example.com" , "" )
+        , Str "."
+        ]
+    ]
+]
