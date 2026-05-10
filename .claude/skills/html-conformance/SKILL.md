@@ -1,18 +1,48 @@
 ---
 name: html-conformance
-description: Incrementally drive Panache's `Flavor::Pandoc` HTML-block /
-  raw-HTML parsing toward `pandoc -f markdown -t native` parity by
-  expanding the `html-block` / `html-inline` slice of the existing
-  pandoc-conformance corpus. Lift HTML structure into the CST in the
-  parser by tokenizing existing source bytes at finer granularity
-  (e.g. `HTML_ATTRS` inside `HTML_BLOCK_TAG`), so the existing
-  `AttributeNode` walk finds ids without a parallel byte-parser.
-  Allowlist cases as parity grows.
+description: Incrementally make Panache's CST shape for HTML-block /
+  raw-HTML conform to pandoc's AST shape under `Flavor::Pandoc`, so
+  downstream consumers (linter, salsa anchor index, LSP, formatter)
+  see the same structural decisions pandoc would have made. The
+  `pandoc -f markdown -t native` projector at
+  `crates/panache-parser/src/pandoc_ast.rs` is a **test-only
+  diagnostic**: divergence from pandoc-native points at a wrong CST,
+  not a fix-it-here problem. Lift HTML structure into the CST by
+  tokenizing existing source bytes at finer granularity (e.g.
+  `HTML_ATTRS` inside `HTML_BLOCK_TAG`), retag wrappers (e.g.
+  `HTML_BLOCK` → `HTML_BLOCK_DIV`), and emit inner block content as
+  real CST children — so the projector becomes a trivial structural
+  walk rather than a second-stage parser.
 ---
 
 Use this skill when asked to advance Panache's HTML conformance,
 unblock a regression that involves raw HTML attributes (issue #263 and
 its descendants), or pick "the next best phase" of the HTML lift.
+
+## What this skill is NOT
+
+- **Not a chase for the conformance pass-rate.** The pass-rate is a
+  metric, not a goal. A passing case can still hide a wrong CST if
+  the projector compensates (re-parses bytes, walks text instead of
+  children, makes context-dependent decisions at projection time).
+  When that happens, the projector silently absorbs structural bugs
+  the CST should have surfaced.
+- **Not a place to add projector logic that papers over CST gaps.**
+  The projector at `crates/panache-parser/src/pandoc_ast.rs` is a
+  test-only diagnostic — its job is to reveal CST shape problems by
+  diffing against pandoc-native. Putting logic there to make a test
+  pass while the CST stays wrong destroys the diagnostic value. The
+  consumers of structural HTML decisions (linter, salsa, LSP,
+  formatter) read the CST, not the projector output.
+- **Not "make it look like pandoc's output text."** The objective is
+  for our CST to encode the same structural decisions pandoc encodes
+  in its AST — Plain vs Para, Div vs RawBlock, RawBlock vs RawInline,
+  matched-pair vs single emit, etc. — so reading the CST gives you
+  the same answers reading pandoc's AST would.
+
+If a session's diff is mostly in `pandoc_ast.rs` (other than removing
+existing compensation), that's a smell. The fix probably belongs in
+the parser.
 
 ## Scope boundaries
 
