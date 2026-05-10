@@ -99,16 +99,21 @@ back into a session entry only if it's purely historical.
   directions** by ~15 tags. Don't merge them. The parser's
   `is_commonmark` flag gates which list runs; the projector only
   runs under Pandoc and uses `is_pandoc_block_tag_name` directly.
-- **Closing forms of inline-block / void tags ARE block starts
-  under Pandoc.** `</video>`, `</button>`, `</embed>` standalone
-  emit as single-line `RawBlock`s in pandoc-native; the parser
-  routes them via `closes_at_open_tag: true` so the block ends on
-  the open line. `cannot_interrupt` (gated on tag-name membership
-  in the dispatcher) keeps them from breaking running paragraphs.
-  Strict-block closes (`</p>`, `</nav>`) and verbatim closes
-  (`</pre>`) still fall through to inline (separate gap, tracked).
-  pandoc's `htmlTag isBlockTag` matches BOTH directions — earlier
-  recap claims that "closing forms must be excluded" were wrong.
+- **Closing forms of strict-block, verbatim, inline-block, and void
+  tags ALL ARE block starts under Pandoc.** Pandoc's `htmlBlock
+  isBlockTag` matches both directions for any tag in
+  `blockHtmlTags ∪ verbatimTags ∪ eitherBlockOrInline`. Routing in
+  the parser: each category emits `BlockTag { closes_at_open_tag:
+  true }` so the block ends on the open line. The dispatcher's
+  `cannot_interrupt` gate keys ONLY on inline-block + void tag
+  names — strict-block (`</p>`, `</nav>`, `</section>`) and verbatim
+  (`</pre>`, `</style>`, `</script>`, `</textarea>`) closes get
+  `YesCanInterrupt` and DO interrupt running paragraphs (matches
+  pandoc). Inline-block / void closes follow `cannot_interrupt`
+  semantics and stay inline inside running paragraphs
+  (`foo\n</video>` → `Para[foo, SB, RI</video>]`). Earlier recap
+  claims that "closing forms must be excluded" were wrong on all
+  counts.
 - **`<script>` is in `eitherBlockOrInline` AND `blockHtmlTags`.**
   Verbatim handling fires first via `VERBATIM_TAGS`; don't add
   `script` to `PANDOC_INLINE_BLOCK_TAGS`. Likewise `<pre>`,
@@ -187,6 +192,15 @@ back into a session entry only if it's purely historical.
   this; deferred.
 - **Cross-boundary cite numbering** for `<div>` recursive reparse
   similarly deferred.
+- **Top-level Para→Plain demotion** when a strict-block / verbatim
+  HTML construct (open OR close direction) follows immediately:
+  pandoc emits `[Plain[foo], RawBlock<p>]` / `[Plain[foo],
+  RawBlock</p>]` / `[Plain[foo], Div(...)]`; we emit `[Para[foo], …]`.
+  All three shapes share one root cause; ranked as the next-session
+  target. The `<div>` recursive-reparse Plain demotion already works
+  via the projector's `flush_html_block_text` close-butted rule —
+  but that mechanism only fires INSIDE an HTML block, not across
+  top-level block boundaries.
 
 --------------------------------------------------------------------------------
 
@@ -204,92 +218,109 @@ Multi-line `<div>` open-tag structural HTML_ATTRS lift landed
 (2026-05-09). Multi-line void open-tag now lifts via
 `find_multiline_open_end` + simple per-line TEXT/NEWLINE emission
 (2026-05-10). Inline-block / void closing forms (`</video>`,
-`</embed>`) also start single-line `RawBlock`s under Pandoc
+`</embed>`) start single-line `RawBlock`s under Pandoc (2026-05-10).
+Strict-block / verbatim closing forms (`</p>`, `</nav>`, `</section>`,
+`</pre>`) likewise lift under Pandoc, with `closes_at_open_tag: true`
+and CAN interrupt a running paragraph (no `cannot_interrupt` gate)
 (2026-05-10).
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-10 (inline-block close lift + matched-pair abandon)
+## Latest session — 2026-05-10 (strict-block + verbatim closing-form lift)
 
-**html pass count: 122 → 126** (+4 new corpus cases). **Workspace:
-0 → 0 failing.** **Total pandoc conformance: 314/314 → 318/318.**
-**New parser fixtures: 3** (paired close-standalone Pandoc/CommonMark
-+ video-source-fallback Pandoc).
+**html pass count: 126 → 132** (+6 new corpus cases). **Workspace:
+0 → 0 failing.** **Total pandoc conformance: 318/318 → 324/324.**
+**New parser fixtures: 4** (paired `</p>` and `</pre>` standalone,
+Pandoc + CommonMark each).
 
 ### What landed
 
-Closed Phase 5's last gap: `<video>\n<source src="x">\nfallback\n
-</video>` projected as `[RawBlock<video>, RawBlock<source>,
-Plain[fallback], RawBlock</video>]` instead of pandoc-native's
-`[RawBlock<video>, RawBlock<source>, Para[Str fallback, SoftBreak,
-RawInline</video>]]`. Two related parser-shape gaps surfaced and
-were fixed in the same session:
+Took the #1 ranked next-target from the prior session: standalone
+`</p>`, `</nav>`, `</section>`, `</pre>` under Pandoc dialect now
+lift to single-line `RawBlock`, mirroring the inline-block / void
+close pattern from the prior session. Pandoc-native rule: `htmlBlock
+isBlockTag` accepts both directions for any tag in
+`blockHtmlTags ∪ verbatimTags`.
 
-1. **Parser** (`html_blocks.rs::try_parse_html_block_start`):
-   accept closing forms (`</video>`, `</button>`, `</embed>`, …)
-   under Pandoc dialect for both `PANDOC_INLINE_BLOCK_TAGS` and
-   `PANDOC_VOID_BLOCK_TAGS`, routed via `closes_at_open_tag: true`
-   so the block ends on the open-tag line. `cannot_interrupt`
-   (gated on tag-name membership in the dispatcher) keeps closing
-   tags from breaking running paragraphs — `foo\n</video>` still
-   stays as `Para[foo, SoftBreak, RawInline</video>]`.
-2. **Projector** (`pandoc_ast.rs::split_html_block_by_tags`,
-   inline-block arm): new helper
-   `interior_starts_with_void_block_tag` peeks past leading
-   newlines/whitespace; when the interior of `<video>...</video>`
-   opens with a void block tag at column 0, the matched-pair lift
-   abandons and emits the open tag as a single `RawBlock`. The
-   trailing `</video>` ends up as `RawInline` inside the
-   reparsed-paragraph tail.
-3. **Projector**: same arm now also emits a single `RawBlock` for
-   inline-block opens with no matched close (e.g. `<video>\nfoo\n`)
-   and for closing tags at fresh-block positions. Without this, the
-   tail-text reparse re-recognized the same open tag and recursed
-   to a stack overflow.
+Pure parser-side fix in `html_blocks.rs::try_parse_html_block_start`
+(+24 lines): a new branch ahead of the existing close-form gate
+matches Pandoc closes whose tag name is in `PANDOC_BLOCK_TAGS` or
+`VERBATIM_TAGS` (and not in inline-block / void, which already had
+their own paths) and returns `BlockTag { closes_at_open_tag: true,
+is_verbatim: false, depth_aware: false, closed_by_blank_line: false
+}`. The dispatcher's `cannot_interrupt` gate is unchanged — it keys
+on inline-block / void only — so strict-block / verbatim closes
+naturally get `YesCanInterrupt` and DO interrupt running paragraphs,
+matching pandoc's `htmlBlock`. No projector or dispatcher changes
+needed: the existing `is_pandoc_block_tag_name` arm in
+`split_html_block_by_tags` already handles both directions.
 
-4 new corpus cases (0315–0318): `<video>\n<source>\nfallback\n
-</video>` (the original divergence); `</video>\n` standalone close;
-`<video>\nfoo\n` open-without-close; `</button>\n` standalone
-inline-block close. 3 new paired parser fixtures
-(`html_block_video_close_standalone_{pandoc,commonmark}` and
-`html_block_video_source_fallback_pandoc`); the close-standalone
-pair pins the dialect-divergent CST — Pandoc → HTML_BLOCK
-(`closes_at_open_tag`) + PARAGRAPH; CommonMark → single HTML_BLOCK
-(type 7, blank-line-terminated).
+Snapshot churn:
+- One existing fixture (`html_block_commonmark_type6_type7_pandoc`)
+  changed: orphan `</div>\n*foo*` now correctly splits as
+  `HTML_BLOCK_DIV + PARAGRAPH` (pandoc-native: `RawBlock</div> +
+  Para[Emph[foo]]`) instead of `PARAGRAPH > INLINE_HTML</div>`. The
+  `<div>` retag in the dispatcher fired automatically because the
+  new branch returns `tag_name = "div"` for closes too.
+
+6 new corpus cases (0319–0324): `</p>`, `</nav>`, `</pre>`,
+`</section>` standalone; `</p> bar` (trailing same-line text → split
+to RawBlock + Para via the projector); `</p>\nbar\n` (close + paragraph
+on next line → same split via the same projector path). 4 new paired
+parser fixtures (`html_block_p_close_standalone_{pandoc,commonmark}`,
+`html_block_pre_close_standalone_{pandoc,commonmark}`); the `</pre>`
+pair pins the real dialect divergence — Pandoc lifts to HTML_BLOCK,
+CommonMark falls through to PARAGRAPH > INLINE_HTML (CM type-7
+explicitly excludes the verbatim tag set).
+
+### Deferred (deliberately not landed)
+
+`foo\n</p>` running-paragraph-then-close: pandoc emits
+`[Plain[foo], RawBlock</p>]`; we now emit `[Para[foo], RawBlock</p>]`
+— the close interrupts but the prior Para is not demoted to Plain.
+Same gap exists for strict-block opens (`foo\n<p>` → `[Plain[foo],
+RawBlock<p>]` per pandoc; we emit `[Para[foo], RawBlock<p>]`); also
+for `<div>` opens (`foo\n<div>` → `[Plain[foo], Div(...)]` per
+pandoc). All three share a single root cause (Para→Plain demotion
+when a strict-block HTML construct follows immediately at the
+top level), better tackled together. Not added to the corpus this
+session to keep the report at 100% pass.
 
 ### Files in committable diff
 
-- Parser-shape: `parser/blocks/html_blocks.rs` (+33/−14 to
-  `try_parse_html_block_start` + 2 unit-test edits).
-- Projector: `pandoc_ast.rs` (+44/−16 to inline-block arm of
-  `split_html_block_by_tags`; new `interior_starts_with_void_block_tag`
-  helper).
-- Corpus: 4 new dirs under `corpus/0315..0318-…/`.
-- Parser fixtures: 3 new under
-  `crates/panache-parser/tests/fixtures/cases/`, registered in
-  `golden_parser_cases.rs`; snapshots emitted.
+- Parser-shape: `parser/blocks/html_blocks.rs` (+24/−5 to
+  `try_parse_html_block_start`).
+- Corpus: 6 new dirs under `corpus/0319..0324-…/`.
+- Parser fixtures: 4 new under
+  `crates/panache-parser/tests/fixtures/cases/` + registration in
+  `golden_parser_cases.rs`; 5 snapshots written / updated (4 new + 1
+  pre-existing fixture's snapshot updated for the orphan-`</div>`
+  retag).
 - Allowlist + report regenerated.
 
-No salsa, formatter, linter, LSP, or other host-side changes.
+No projector, dispatcher, salsa, formatter, linter, LSP, or other
+host-side changes.
 
 ### Suggested next sub-targets, ranked
 
-1. **Strict-block / verbatim closing-form lift**: `</p>`, `</nav>`,
-   `</pre>` standalone — pandoc-native still emits as `RawBlock`
-   but our parser leaves them as `Para[RawInline]`. Mirror this
-   session's inline-block close path under the strict-block /
-   verbatim arms. Risk: the strict-block close-as-block can
-   interrupt running paragraphs (no `cannot_interrupt`), which may
-   shift existing fixtures (`foo\n</p>` is currently
-   `Para[foo, SB, RI</p>]`; pandoc emits `Plain[foo] +
-   RawBlock</p>`). Triage hits before landing.
+1. **Para→Plain demotion on top-level HTML-block boundary**: covers
+   `foo\n</p>`, `foo\n<p>`, `foo\n<nav>`, `foo\n<div>` (+ all
+   strict-block + verbatim siblings). Pandoc demotes the prior Para
+   to Plain when an HTML block follows immediately (no blank line);
+   our two-block emission preserves Para. The `<div>` Plain demotion
+   that already works lives inside the projector's recursive reparse
+   (`flush_html_block_text` close-butted rule); top-level boundary
+   demotion needs a different mechanism (likely a post-pass on the
+   block list, or shift detection into the projector's outer
+   `block_from` walk). Add a small corpus subset (`foo\n</p>`,
+   `foo\n<p>`, `foo\n<nav>`) before fixing — ~6 cases.
 2. **Strict-block multi-line open structural cleanup**
-   (`<table\n  border="1">`). Output already correct; the CST
-   still splits open-tag bytes between HTML_BLOCK_TAG (line 0) and
-   HTML_BLOCK_CONTENT (later lines). Reuse
-   `find_multiline_open_end` + a parameterized emitter. Low value
-   (no behavior change); skip unless a corpus case exercises a
-   shape that depends on the cleaner CST.
+   (`<table\n  border="1">`). Output already correct; the CST still
+   splits open-tag bytes between HTML_BLOCK_TAG (line 0) and
+   HTML_BLOCK_CONTENT (later lines). Reuse `find_multiline_open_end`
+   + a parameterized emitter. Low value (no behavior change); skip
+   unless a corpus case exercises a shape that depends on the cleaner
+   CST.
 3. **Audit `parse_html_attrs` and `find_matching_html_close` for
    literal-byte hazards** (still on the list from earlier sessions).
 4. **Outer-wins-on-conflict for inherited refs/footnotes** (still
@@ -297,14 +328,22 @@ No salsa, formatter, linter, LSP, or other host-side changes.
 
 ### New traps (folded into Persistent traps)
 
-- Closing forms of inline-block / void tags ARE block starts under
-  Pandoc — earlier "exclude closing forms" rule was wrong. Folded
-  into Pandoc tag categorization.
-- Matched-pair lift in the projector must abandon when interior
-  starts with a void block tag at column 0, AND inline-block opens
-  with no matched close must emit as `RawBlock` (otherwise tail-text
-  reparse recurses to stack overflow). Folded into Projector tag
-  splitting.
+- Strict-block + verbatim closing forms ARE block starts under
+  Pandoc, AND CAN interrupt running paragraphs (unlike inline-block
+  / void closes). The dispatcher's `cannot_interrupt` gate keys on
+  inline-block / void only — strict / verbatim closes get
+  `YesCanInterrupt` and the prior paragraph splits at the close.
+  Folded into Pandoc tag categorization.
+- Pandoc demotes a prior Para to Plain whenever a strict-block /
+  verbatim HTML construct follows immediately at the top level (no
+  blank line). Our two-block emission doesn't demote — covers both
+  open and close directions. Captured in Out of scope / known
+  divergences as the next-session target.
+- Adding strict-block close lift retroactively fixed orphan `</div>`
+  too (because the new branch also returns `tag_name = "div"` for
+  closes, triggering the existing dispatcher retag to
+  `HTML_BLOCK_DIV`). Snapshot churn was correct progress, not a
+  regression.
 
 --------------------------------------------------------------------------------
 
@@ -313,6 +352,12 @@ No salsa, formatter, linter, LSP, or other host-side changes.
 Newest first. One line per session: date — phase/sub-target — pass
 count delta — root cause / lever.
 
+- 2026-05-10 — Strict-block + verbatim closing-form lift (`</p>`,
+  `</nav>`, `</section>`, `</pre>`) — html 126 → 132 — new branch in
+  `try_parse_html_block_start` accepts Pandoc closes for any tag in
+  `PANDOC_BLOCK_TAGS ∪ VERBATIM_TAGS` with `closes_at_open_tag: true`;
+  `cannot_interrupt` unchanged so closes interrupt running paragraphs;
+  retroactively fixed orphan `</div>` via existing dispatcher retag.
 - 2026-05-10 — Inline-block close lift + matched-pair-abandons-on-void-interior
   (`<video>\n<source>\nfallback\n</video>`, `</video>`/`</button>`/`</embed>`
   standalone) — html 122 → 126 — accept closing forms under Pandoc with
@@ -341,57 +386,24 @@ count delta — root cause / lever.
   `<header>`, `<footer>`, `<main>`, `<details>`, `<figure>`,
   `<figcaption>`, `<nav>`) — html 87 → 94 — pure corpus growth + doc
   comment update; documented `eitherBlockOrInline` gap.
-- 2026-05-09 — Phase 5 audit pivoted to `<DIV>` losslessness fix —
-  html 87 → 87 — `emit_div_open_tag_tokens` had literal `"<div"`
-  instead of source bytes; one-line fix + uppercase paired fixture.
-  Projector cleanup deferred (low value).
-- 2026-05-09 — Phase 3 dialect-divergent `blockHtmlTags`
-  (`<dialog>`/`<canvas>` etc.) — html 80 → 87 — split CM/Pandoc
-  block-tag lists; 7 new corpus cases.
-- 2026-05-09 — Phase 5 Plain/Para promotion rule for `<div>`
-  recursive reparse — html 76 → 80 — projector-only;
-  `close_butted = byte_at(close_start - 1) != '\n'`; demote LAST
-  block only.
-- 2026-05-09 — Phase 1 multi-line `<div>` open-tag
-  HTML_ATTRS structural lift — html 75 → 76 — per-line
-  `HTML_ATTRS` nodes (not one big spanning node); quote state threads
-  across line boundaries.
-- 2026-05-09 — Phase 5 cross-boundary `RefsCtx` inheritance for
-  outer→inner refs/footnotes/heading-slugs — html 72 → 75 — new
-  `build_refs_ctx_inherited`; `parse_pandoc_blocks` calls it with
-  `Some(&outer)`; AST gains `Clone`.
-- 2026-05-09 — Phase 5 inner-`RefsCtx` for `parse_pandoc_blocks`
-  recursive reparse — html 62 → 72 — heading auto-ids, ref defs,
-  footnote defs inside `<div>` resolve in inner ctx; outer ctx
-  saved via `mem::take` and restored.
-- 2026-05-08 — Phase 5 depth-aware nested `<div>` close scan
-  (case 199 unblocked) — html 57 → 62 — `count_tag_balance` walks
-  same-name opens/closes; new `depth_aware` field on `BlockTag`;
-  CM verbatim keeps first-close.
-- 2026-05-08 — Phase 5/6 projector-level `markdown_in_html_blocks`
-  for non-sectioning block tags — html 47 → 57 — byte-aware
-  `split_html_block_by_tags`; new `find_matching_html_close`,
-  `flush_html_block_text`, `extract_html_tag_name`.
-- 2026-05-08 — CommonMark type-4 lowercase declaration recognition
-  — html 47 → 47 (CM-side fix; no Pandoc corpus impact) — paired
-  parser fixture.
-- 2026-05-08 — Phase 4 follow-up: gate type-4/type-5 HTML blocks
-  off under Pandoc dialect — html 39 → 47 — `<!DOCTYPE>`/`<![CDATA>`
-  fall through to paragraph parsing; `try_parse_inline_html` gained
-  `dialect: Dialect` parameter.
-- 2026-05-08 — Phase 4 comments + processing instructions corpus
-  pin — html 27 → 39 — pure corpus growth; declaration/CDATA
-  parser-shape gap noted.
-- 2026-05-08 — Phase 3 sectioning + verbatim negative-space pin
-  (`<section>`, `<article>`, `<aside>`, `<nav>`, `<pre>`, `<style>`,
-  `<script>`, `<textarea>`) — html 17 → 27 — pure corpus growth.
+- 2026-05-09 — `<DIV>` losslessness fix + Phase 3 dialect-divergent
+  `blockHtmlTags` split — html 87 → 87 then 80 → 87 — source-byte
+  fix in `emit_div_open_tag_tokens`; CM/Pandoc block-tag lists split.
+- 2026-05-09 — Phase 5 `<div>` Plain/Para promotion + multi-line
+  open-tag HTML_ATTRS lift + cross-boundary refs inheritance —
+  html 62 → 80 — projector-only Plain demotion; per-line HTML_ATTRS
+  nodes; `build_refs_ctx_inherited` + inner `RefsCtx` swap via
+  `mem::take`.
+- 2026-05-08 — Phase 5 depth-aware nested `<div>` close scan +
+  projector-level `markdown_in_html_blocks` for non-sectioning block
+  tags — html 47 → 62 — `count_tag_balance` + `depth_aware` field;
+  byte-aware `split_html_block_by_tags`.
+- 2026-05-08 — Phase 4 declarations / CDATA / comments / PIs —
+  html 27 → 47 — pandoc gate on type-4/type-5 + corpus pin.
+- 2026-05-08 — Phase 3 sectioning + verbatim negative-space pin —
+  html 17 → 27 — pure corpus growth.
 - 2026-05-08 — Phase 2 `<span>` inline lift — html 9 → 17 —
-  `INLINE_HTML_SPAN` retag of `BRACKETED_SPAN`; attribute region
-  restructured from `SPAN_ATTRIBUTES` token to `HTML_ATTRS` node.
-  `<span>` was already lifting; corrected the misleading "INLINE_HTML"
-  starting-state claim from Phase 1's RECAP.
+  `INLINE_HTML_SPAN` retag + `HTML_ATTRS` restructure.
 - 2026-05-08 — Phase 1 `<div>` block lift (issue #263 closed) —
   html 0 → 9 — `HTML_BLOCK_DIV` wrapper retag + `HTML_ATTRS`
-  open-tag tokenization; `AttributeNode::can_cast(HTML_ATTRS)` so
-  salsa walk picks up `<div id>` automatically; nested-div blocked
-  as Phase 5 target.
+  open-tag tokenization.

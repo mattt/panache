@@ -314,17 +314,41 @@ pub(crate) fn try_parse_html_block_start(
     }
 
     // Try to parse as opening tag (or closing tag, under CommonMark and Pandoc).
-    // Pandoc-native recognizes a standalone `</video>`, `</button>`, `</embed>`
-    // etc. as a single-line `RawBlock`; the strict-block close path (`</p>`,
-    // `</nav>`) and verbatim close path (`</pre>`) still fall through to inline
-    // here — those still diverge from pandoc-native and are tracked separately.
+    // Pandoc-native recognizes standalone closing forms of strict-block tags
+    // (`</p>`, `</nav>`, `</section>`), verbatim tags (`</pre>`, `</style>`,
+    // `</script>`, `</textarea>`), and inline-block / void tags (`</video>`,
+    // `</button>`, `</embed>`) as single-line `RawBlock`s — they always end on
+    // the open-tag line via `closes_at_open_tag: true`.
     if let Some(tag_name) = extract_block_tag_name(trimmed, true) {
         let tag_lower = tag_name.to_lowercase();
         let is_closing = trimmed.starts_with("</");
 
-        // Under Pandoc, only inline-block + void closing forms are recognized
-        // as block starts; everything else falls through to the existing
-        // inline-html path.
+        // Pandoc dialect: strict-block (`PANDOC_BLOCK_TAGS`) and verbatim
+        // (`VERBATIM_TAGS`) closing forms emit as single-line `RawBlock`.
+        // Unlike inline-block / void closes, these CAN interrupt a running
+        // paragraph (the dispatcher's `cannot_interrupt` only covers the
+        // inline-block / void categories). Inline-block / void closes are
+        // handled by their own branches further below.
+        if !is_commonmark
+            && is_closing
+            && (PANDOC_BLOCK_TAGS.contains(&tag_lower.as_str())
+                || VERBATIM_TAGS.contains(&tag_lower.as_str()))
+            && !PANDOC_INLINE_BLOCK_TAGS.contains(&tag_lower.as_str())
+            && !PANDOC_VOID_BLOCK_TAGS.contains(&tag_lower.as_str())
+        {
+            return Some(HtmlBlockType::BlockTag {
+                tag_name: tag_lower,
+                is_verbatim: false,
+                closed_by_blank_line: false,
+                depth_aware: false,
+                closes_at_open_tag: true,
+            });
+        }
+
+        // Under Pandoc, remaining closing forms (truly inline-only tags like
+        // `</em>`, `</span>`) are not block starts — fall through to the
+        // existing inline-html path. Inline-block + void closes are caught
+        // by the dedicated branches further below.
         if !is_commonmark
             && is_closing
             && !PANDOC_INLINE_BLOCK_TAGS.contains(&tag_lower.as_str())

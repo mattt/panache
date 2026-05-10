@@ -370,3 +370,11 @@
 316
 317
 318
+
+# html-block (strict-block + verbatim closing forms — standalone `</p>`, `</nav>`, `</section>`, `</pre>` etc. emit as single-line RawBlock under Pandoc, mirroring pandoc-native's `htmlBlock isBlockTag` accept-both-directions rule. Unlike inline-block / void closes, these CAN interrupt a running paragraph (no `cannot_interrupt` in the dispatcher); the projector's existing `is_pandoc_block_tag_name` arm in `split_html_block_by_tags` already splits trailing same-line text into a separate Para, so `</p> bar` projects as [RawBlock</p>, Para[bar]]. Para→Plain demotion when a strict-close interrupts a running paragraph (`foo\n</p>` → `[Plain[foo], RawBlock</p>]` per pandoc) is a separate gap shared with strict-block opens; not addressed here.)
+319
+320
+321
+322
+323
+324

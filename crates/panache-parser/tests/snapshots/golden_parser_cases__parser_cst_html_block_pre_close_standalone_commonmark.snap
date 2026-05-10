@@ -1,0 +1,9 @@
+---
+source: crates/panache-parser/tests/golden_parser_cases.rs
+expression: cst_output
+---
+DOCUMENT@0..7
+  PARAGRAPH@0..7
+    INLINE_HTML@0..6
+      INLINE_HTML_CONTENT@0..6 "</pre>"
+    NEWLINE@6..7 "\n"
