@@ -931,6 +931,56 @@ fn find_multiline_div_open_end(
     None
 }
 
+/// Pandoc-only: validate that the HTML open tag starting at `lines[start_pos]`
+/// is syntactically complete — i.e. an unquoted `>` exists somewhere from the
+/// `<` onward, possibly spanning subsequent lines. Pandoc treats an unclosed
+/// open tag (no `>` in the remaining input) as paragraph text rather than
+/// starting a `RawBlock`; recognizing it as an HTML block makes the projector
+/// reparse the same content recursively, causing a stack overflow.
+///
+/// Quote state (`"..."` / `'...'`) is threaded across line boundaries so a
+/// `>` inside an attribute value doesn't count. Blank lines do not stop the
+/// scan — pandoc's `htmlTag` reads across them, just emitting a warning when
+/// the tag eventually closes far away.
+pub(crate) fn pandoc_html_open_tag_closes(
+    lines: &[&str],
+    start_pos: usize,
+    bq_depth: usize,
+) -> bool {
+    if start_pos >= lines.len() {
+        return false;
+    }
+    let mut quote: Option<u8> = None;
+    for (offset, line) in lines.iter().enumerate().skip(start_pos) {
+        let inner = if bq_depth > 0 {
+            strip_n_blockquote_markers(line, bq_depth)
+        } else {
+            line
+        };
+        let bytes = inner.as_bytes();
+        let mut i = 0usize;
+        if offset == start_pos {
+            while i < bytes.len() && bytes[i] == b' ' {
+                i += 1;
+            }
+            if bytes.get(i) != Some(&b'<') {
+                return false;
+            }
+            i += 1;
+        }
+        while i < bytes.len() {
+            match (quote, bytes[i]) {
+                (None, b'"') | (None, b'\'') => quote = Some(bytes[i]),
+                (Some(q), x) if x == q => quote = None,
+                (None, b'>') => return true,
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+    false
+}
+
 /// Emit a multi-line `<div>` open tag spanning `lines[start_pos..=end_line_idx]`
 /// as structural CST tokens. Bytes are byte-identical to the source — only
 /// tokenization granularity changes so `AttributeNode::cast(HTML_ATTRS)` finds
@@ -1359,6 +1409,45 @@ mod tests {
                 closes_at_open_tag: false,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn test_pandoc_html_open_tag_closes() {
+        // Single-line complete: scanner finds `>` on the first line.
+        assert!(pandoc_html_open_tag_closes(&["<div>"], 0, 0));
+        assert!(pandoc_html_open_tag_closes(&["<embed src=\"x\">"], 0, 0));
+        // Multi-line complete: scanner finds `>` on a later line.
+        assert!(pandoc_html_open_tag_closes(
+            &["<div", "  id=\"x\">", "body", "</div>"],
+            0,
+            0
+        ));
+        assert!(pandoc_html_open_tag_closes(
+            &["<embed", "  src=\"x.png\" alt=\"y\">"],
+            0,
+            0
+        ));
+        // Quoted `>` does not close: scanner threads quote state.
+        assert!(!pandoc_html_open_tag_closes(
+            &["<div title=\"a>b", "  c\""],
+            0,
+            0
+        ));
+        assert!(pandoc_html_open_tag_closes(
+            &["<div title=\"a>b", "  c\">"],
+            0,
+            0
+        ));
+        // Incomplete: no `>` anywhere — pandoc treats as paragraph text.
+        assert!(!pandoc_html_open_tag_closes(&["<embed"], 0, 0));
+        assert!(!pandoc_html_open_tag_closes(&["<div", "foo", "bar"], 0, 0));
+        // Pandoc tolerates blank lines mid-open-tag (its `htmlTag` reads
+        // across them); the scan continues until EOF or `>`.
+        assert!(pandoc_html_open_tag_closes(
+            &["<div", "", "id=\"x\">"],
+            0,
+            0
         ));
     }
 

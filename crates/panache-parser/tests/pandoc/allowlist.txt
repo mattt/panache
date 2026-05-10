@@ -351,3 +351,9 @@
 303
 304
 305
+
+# html-block (incomplete open tag — pandoc treats `<embed`, `<div`, `<table`, `<iframe` etc. with no `>` anywhere as paragraph text rather than RawBlock. Recognizing them as HTML blocks made the projector reparse the same bytes and infinite-recurse; the parser now rejects open tags that never close in `pandoc_html_open_tag_closes`.)
+306
+307
+308
+309

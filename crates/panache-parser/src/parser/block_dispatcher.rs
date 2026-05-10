@@ -32,7 +32,7 @@ use super::blocks::headings::{
 use super::blocks::horizontal_rules::{emit_horizontal_rule, try_parse_horizontal_rule};
 use super::blocks::html_blocks::{
     HtmlBlockType, is_pandoc_inline_block_tag_name, is_pandoc_void_block_tag_name,
-    parse_html_block_with_wrapper, try_parse_html_block_start,
+    pandoc_html_open_tag_closes, parse_html_block_with_wrapper, try_parse_html_block_start,
 };
 use super::blocks::indented_code::{is_indented_code_line, parse_indented_code_block};
 use super::blocks::latex_envs::LatexEnvInfo;
@@ -1748,8 +1748,8 @@ impl BlockParser for HtmlBlockParser {
     fn detect_prepared(
         &self,
         ctx: &BlockContext,
-        _lines: &[&str],
-        _line_pos: usize,
+        lines: &[&str],
+        line_pos: usize,
     ) -> Option<(BlockDetectionResult, Option<Box<dyn Any>>)> {
         if !ctx.config.extensions.raw_html {
             return None;
@@ -1769,6 +1769,21 @@ impl BlockParser for HtmlBlockParser {
 
         let is_commonmark = ctx.config.dialect == crate::options::Dialect::CommonMark;
         let block_type = try_parse_html_block_start(ctx.content, is_commonmark)?;
+
+        // Pandoc-only: validate that the open tag is syntactically complete
+        // (an unquoted `>` exists somewhere from the `<` onward, possibly
+        // spanning later lines). Pandoc-native treats incomplete open tags
+        // (`<embed\n`, `<div\n`, `<table\n` with no `>`) as paragraph text;
+        // recognizing them as `RawBlock` makes the projector reparse the
+        // same bytes and infinite-recurse. CommonMark dialect deliberately
+        // accepts incomplete type-6 open tags (`<table\n` is a `RawBlock`),
+        // so the validation is gated on Pandoc dialect and BlockTag types.
+        if !is_commonmark
+            && matches!(block_type, HtmlBlockType::BlockTag { .. })
+            && !pandoc_html_open_tag_closes(lines, line_pos, ctx.blockquote_depth)
+        {
+            return None;
+        }
 
         // Type 7 cannot interrupt a paragraph (CommonMark §4.6). Other
         // types can. Pandoc-dialect additionally treats HTML comments as
