@@ -629,6 +629,64 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Close an open `Container::Paragraph` at the top of the stack, retagging
+    /// the wrapper as `PLAIN` instead of `PARAGRAPH`. Mirrors pandoc's
+    /// `[Plain[foo], RawBlock<p>]` shape when a paragraph terminates because
+    /// the next line opens an HTML strict-block / verbatim block.
+    ///
+    /// Caller is responsible for ensuring the paragraph is at the top of the
+    /// container stack (i.e. no other deeper containers above it). All other
+    /// closing-related semantics (list-item buffering, blockquote depth) are
+    /// unchanged from `close_paragraph_if_open`; this method only changes the
+    /// emitted wrapper kind.
+    fn close_paragraph_as_plain_if_open(&mut self) {
+        if !self.is_paragraph_open() {
+            return;
+        }
+        let Some(Container::Paragraph {
+            buffer,
+            start_checkpoint,
+            ..
+        }) = self.containers.stack.last()
+        else {
+            return;
+        };
+        let buffer_clone = buffer.clone();
+        let checkpoint = *start_checkpoint;
+        self.containers.stack.pop();
+        self.builder
+            .start_node_at(checkpoint, SyntaxKind::PLAIN.into());
+        if !buffer_clone.is_empty() {
+            buffer_clone.emit_with_inlines(&mut self.builder, self.config);
+        }
+        self.builder.finish_node();
+    }
+
+    /// Whether an HTML block about to interrupt an open paragraph should
+    /// retag the paragraph wrapper as `PLAIN` (pandoc's
+    /// `[Plain[foo], RawBlock<p>]` rule). Fires only under Pandoc dialect
+    /// when the YesCanInterrupt match is an HTML `BlockTag` — by
+    /// construction this is a strict-block (`PANDOC_BLOCK_TAGS`) or
+    /// verbatim (`VERBATIM_TAGS`) tag, since inline-block / void block
+    /// tags and Type7 / comments take the `cannot_interrupt` path and
+    /// never reach this site.
+    fn html_block_demotes_paragraph_to_plain(&self, block_match: &PreparedBlockMatch) -> bool {
+        if self.config.dialect != crate::options::Dialect::Pandoc {
+            return false;
+        }
+        if self.block_registry.parser_name(block_match) != "html_block" {
+            return false;
+        }
+        let html_block_type = block_match
+            .payload
+            .as_ref()
+            .and_then(|p| p.downcast_ref::<crate::parser::blocks::html_blocks::HtmlBlockType>());
+        matches!(
+            html_block_type,
+            Some(crate::parser::blocks::html_blocks::HtmlBlockType::BlockTag { .. })
+        )
+    }
+
     /// Prepare for a block-level element by flushing buffers and closing paragraphs.
     /// This is a common pattern before starting tables, code blocks, divs, etc.
     fn prepare_for_block_element(&mut self) {
@@ -2911,7 +2969,11 @@ impl<'a> Parser<'a> {
 
                     self.emit_list_item_buffer_if_needed();
                     if self.is_paragraph_open() {
-                        self.close_containers_to(self.containers.depth() - 1);
+                        if self.html_block_demotes_paragraph_to_plain(block_match) {
+                            self.close_paragraph_as_plain_if_open();
+                        } else {
+                            self.close_containers_to(self.containers.depth() - 1);
+                        }
                     }
 
                     // CommonMark §5.2: a thematic break / ATX heading /

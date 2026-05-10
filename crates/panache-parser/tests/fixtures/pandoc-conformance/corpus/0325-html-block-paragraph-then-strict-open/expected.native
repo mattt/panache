@@ -1,0 +1,1 @@
+[ Plain [ Str "foo" ] , RawBlock (Format "html") "<p>" ]

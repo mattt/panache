@@ -378,3 +378,10 @@
 322
 323
 324
+
+# html-block (paragraph PARAGRAPH→PLAIN demotion when interrupted by HTML strict-block / verbatim — `foo\n<p>` and `foo\n</p>` and `foo\n<div>...</div>` and `foo\n<pre>...</pre>` all project as `[Plain[foo], …]` per pandoc, not `[Para[foo], …]`. Parser-side decision: at `BlockDetectionResult::YesCanInterrupt` for an HTML BlockTag under Pandoc dialect, retag the closing PARAGRAPH wrapper as PLAIN. Inline-block / void / comment paths take `cannot_interrupt` and stay inside Para. Replicates the 2026-05-10-reverted projector demotion as a parser decision.)
+325
+326
+327
+328
+329

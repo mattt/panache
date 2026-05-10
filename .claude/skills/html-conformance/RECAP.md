@@ -119,6 +119,16 @@ back into a session entry only if it's purely historical.
   `script` to `PANDOC_INLINE_BLOCK_TAGS`. Likewise `<pre>`,
   `<style>`, `<textarea>` membership in `PANDOC_BLOCK_TAGS` is
   harmless — the verbatim arm fires first.
+- **`<style>` and processing instructions cannot interrupt under
+  Pandoc.** Pandoc-native: `foo\n<style>x</style>` and
+  `foo\n<?...?>` stay as a single `Para` with the tag(s) as
+  `RawInline`. Panache currently splits both into RawBlock
+  (post-2026-05-10 with PARAGRAPH→PLAIN: `[Plain[foo],
+  RawBlock<style>...]`). Fix: extend `cannot_interrupt` in
+  `HtmlBlockParser::detect_prepared` to include the `<style>`
+  BlockTag and `HtmlBlockType::ProcessingInstruction` under
+  Pandoc dialect. (`<script>` must keep splitting — pandoc *does*
+  treat it as a strict block.)
 
 ### Projector tag splitting
 
@@ -192,15 +202,15 @@ back into a session entry only if it's purely historical.
   this; deferred.
 - **Cross-boundary cite numbering** for `<div>` recursive reparse
   similarly deferred.
-- **Top-level Para→Plain demotion** when a strict-block / verbatim
-  HTML construct (open OR close direction) follows immediately:
-  pandoc emits `[Plain[foo], RawBlock<p>]` / `[Plain[foo],
-  RawBlock</p>]` / `[Plain[foo], Div(...)]`; we emit `[Para[foo], …]`.
-  Belongs in the parser as a `PARAGRAPH → PLAIN` retag (the CST
-  already has both kinds, and the projector trivially maps each to
-  its pandoc-AST counterpart). A 2026-05-10 attempt put this in the
-  projector and was reverted — projector compensation defeats the
-  diagnostic.
+- **Top-level Para→Plain demotion at HTML strict-block / verbatim
+  adjacency: LANDED 2026-05-10.** Parser-side fix in
+  `Parser::close_paragraph_as_plain_if_open` +
+  `html_block_demotes_paragraph_to_plain`, wired at the
+  YesCanInterrupt branch in `core.rs`. Gated on `Dialect::Pandoc` +
+  `parser_name == "html_block"` + `HtmlBlockType::BlockTag`. CST
+  emits `PLAIN` instead of `PARAGRAPH`; projector trivially maps
+  each. Don't reintroduce the projector-side demotion (reverted
+  earlier the same day).
 
 ### Projector-as-second-stage-parser smell (architectural)
 
@@ -232,7 +242,7 @@ how pandoc itself sub-parses cell content and can stay.
 | 3 | Sectioning + verbatim corpus pin; `eitherBlockOrInline` lift | **Conformance landed** — non-void (2026-05-09); void (`<embed>`/`<area>`/`<source>`/`<track>`) (2026-05-10). Implementation leans on projector-side `inline_pending` tracking + byte walker; CST still opaque for split/matched-pair shapes. |
 | 4 | Comments, PIs, declarations, CDATA projection | **Conformance landed** (2026-05-08); type-4 CM lowercase still gappy. CST opaque (these constructs project as RawBlock / RawInline). |
 | 5 | `markdown_in_html_blocks` interaction edge cases | **Conformance landed** — depth-aware nested div, Plain/Para promotion, refs inheritance, **projector-level splitter** (`split_html_block_by_tags` byte walker + `parse_pandoc_blocks` recursive reparse), outer-matched-pair-abandons-on-void-interior. **The structural CST lift was deferred** — Phase 5's mechanism is the projector reparsing bytes, not the parser emitting structure. |
-| 6 (new) | Lift inner HTML block content into structural CST children — `HTML_BLOCK_DIV` gets `PARAGRAPH` / `LIST` / etc. as direct children; `split_html_block_by_tags` / `flush_html_block_*` / `parse_pandoc_blocks` collapse into trivial CST walks; `PARAGRAPH→PLAIN` retag at adjacent-HTML-block boundary. | **Not started** — the actual conformance-by-CST-shape work the skill is about. |
+| 6 (new) | Lift inner HTML block content into structural CST children — `HTML_BLOCK_DIV` gets `PARAGRAPH` / `LIST` / etc. as direct children; `split_html_block_by_tags` / `flush_html_block_*` / `parse_pandoc_blocks` collapse into trivial CST walks; `PARAGRAPH→PLAIN` retag at adjacent-HTML-block boundary. | **Fix #1 landed (2026-05-10)** — `PARAGRAPH→PLAIN` retag at YesCanInterrupt for HTML BlockTag under Pandoc; +5 conformance (132 → 137 html). Fixes #2-#4 from AUDIT.md still pending: walk structural CST for `<div>` open-tag attrs, lift inner blocks into CST children, full `HTML_BLOCK` body structural split. |
 
 Multi-line `<div>` open-tag structural HTML_ATTRS lift landed
 (2026-05-09). Multi-line void open-tag now lifts via
@@ -246,118 +256,85 @@ and CAN interrupt a running paragraph (no `cannot_interrupt` gate)
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-10 (course correction; aborted projector fix reverted)
+## Latest session — 2026-05-10 (Phase 6 fix #1 — PARAGRAPH→PLAIN retag at HTML strict/verbatim adjacency)
 
-Attempted the prior-session #1 target (Para→Plain demotion at
-top-level HTML-block boundary) by adding a CST-adjacency helper
-inside the projector. 6 corpus cases / 2 parser fixtures / html 132
-→ 138 / all green. **User flagged the architectural problem; the
-entire session's diff was reverted** (back to 132 / 324). The
-pandoc-AST projector is a test-only diagnostic for CST shape;
-projection-time logic makes the harness pass while the CST stays
-wrong, and consumers (linter / salsa / LSP / formatter) walk the
-CST, not the projector.
+Implemented audit fix #1: parser retags PARAGRAPH→PLAIN when an open
+paragraph is interrupted by an HTML strict-block / verbatim block tag
+under Pandoc dialect. Replicates the 2026-05-10-reverted projector
+demotion as a single-site parser decision; projector unchanged.
 
-Audit also surfaced that Phases 1–5's "completion" was
-conformance-completion, not structural-completion — the projector
-still re-runs the markdown parser on HTML block bodies
-(`parse_pandoc_blocks`), walks bytes inside HTML_BLOCK to split
-per-tag (`split_html_block_by_tags`), and reparses inter-tag text
-(`flush_html_block_text` / `_tail_text`). Parser work hidden in
-the projector.
+Pass count: 324 → 329 total (+5), html 132 → 137 (+5).
 
-`SKILL.md` description and a new "What this skill is NOT" section
-landed to reflect the actual goal: make the CST encode what
-pandoc's AST encodes. New Phase 6 added to track the structural
-lift work.
+### What landed
+
+- New `Parser::close_paragraph_as_plain_if_open` + helper
+  `html_block_demotes_paragraph_to_plain(block_match)` in
+  `crates/panache-parser/src/parser/core.rs`. Wired at the
+  YesCanInterrupt branch (line ~2978) — the only site that pops a
+  paragraph due to interruption.
+- Helper gates on `Dialect::Pandoc`, `parser_name == "html_block"`,
+  and `HtmlBlockType::BlockTag {..}`. By construction at this site
+  the BlockTag is strict-block (`PANDOC_BLOCK_TAGS`) or verbatim
+  (`VERBATIM_TAGS`) — inline-block / void / Type7 / comments take
+  the `cannot_interrupt` path and never reach here.
+- Corpus: 5 new cases (0325-0329) — paragraph + strict-open,
+  paragraph + strict-close, paragraph + div, paragraph + verbatim,
+  multi-line paragraph + strict-open. New allowlist section
+  `# html-block (paragraph PARAGRAPH→PLAIN demotion …)`.
+- Parser fixtures (paired CM/Pandoc): pinned dialect divergence —
+  Pandoc emits PLAIN, CommonMark keeps PARAGRAPH.
+- Formatter golden (`html_block_paragraph_demote`) — idempotency
+  holds; PLAIN at top level formats identically to PARAGRAPH (text
+  bytes unchanged), and pass1 == pass2.
+
+### Suggested next sub-targets
+
+Audit's ranked list, items still pending:
+
+1. **Fix #2 — `html_div_block` walks structural CST for open-tag
+   attrs** (small projector cleanup, no conformance impact). Sets
+   the precedent for #3 by removing one of
+   `try_div_html_block`'s two byte walks. Pure
+   `pandoc_ast.rs` change.
+2. **Fix #3 — lift `<div>` inner blocks into structural CST
+   children** (Phase 6 proper, medium). Collapses
+   `parse_pandoc_blocks` recursive reparse, `close_butted` rule,
+   cross-boundary `RefsCtx` swap. Linter/salsa/LSP can finally
+   see structural children of a `<div>`.
+3. **Fix #4 — full HTML_BLOCK body structural split** (large;
+   defer until #3 lands). Eliminates `split_html_block_by_tags`,
+   both flush helpers, `interior_starts_with_void_block_tag`,
+   `find_matching_html_close*`, `inline_pending` flag.
+4. **`<style>` cannot_interrupt under Pandoc** — discovered this
+   session. Pandoc-native: `foo\n<style>x</style>\n` →
+   `[Para[foo, SoftBreak, RawInline<style>, Str x, RawInline</style>]]`
+   (no split). Panache splits and (post-fix) emits
+   `[Plain[foo], RawBlock<style>x</style>]`. Same gap exists for
+   processing instructions (`<?...?>`). Belongs in
+   `HtmlBlockParser::detect_prepared` — extend `cannot_interrupt`
+   in Pandoc dialect to include `<style>` BlockTag and
+   `HtmlBlockType::ProcessingInstruction`. Small parser change,
+   needs corpus pin first.
 
 ### Files in committable diff
 
-- `.claude/skills/html-conformance/SKILL.md` (description rewrite +
-  "What this skill is NOT" section)
-- `.claude/skills/html-conformance/RECAP.md` (Phase progress,
-  Persistent traps, this entry)
+- `crates/panache-parser/src/parser/core.rs` — new methods +
+  YesCanInterrupt wire-up.
+- `crates/panache-parser/tests/pandoc/{allowlist,report}.txt`,
+  `docs/development/pandoc-report.json` — regenerated.
+- `crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/`
+  — 5 new cases (0325-0329).
+- `crates/panache-parser/tests/fixtures/cases/` + `tests/snapshots/`
+  + `tests/golden_parser_cases.rs` — 3 new parser fixtures (paired
+  CM/Pandoc) + snapshots.
+- `tests/fixtures/cases/html_block_paragraph_demote/` +
+  `tests/golden_cases.rs` — formatter golden + wire-up.
+- `.claude/skills/html-conformance/RECAP.md` — this entry.
 
-No code, corpus, fixture, allowlist, or snapshot changes.
-Conformance count unchanged: 132 / 132 html, 324 / 324 total.
+### New traps
 
-### Suggested next session: audit the projector first
-
-Before any structural lift work, do a **full audit of
-`crates/panache-parser/src/pandoc_ast.rs`** to enumerate every
-place it papers over CST gaps. The audit is itself the
-deliverable — a written inventory we can then prioritize. Without
-it we're guessing at scope, and the conformance harness can't tell
-us where compensation is happening (it only sees the final
-pandoc-native text). Concrete output to produce:
-
-1. **Reparse sites** — every call that re-runs the markdown parser
-   on bytes already in the CST. Known starting set:
-   - `parse_pandoc_blocks` (line ~1645, used by `try_div_html_block`)
-   - `parse_grid_cell_text` (line ~2820)
-   - `parse_cell_text_inlines` (line ~3060)
-   For each: classify as **defensible** (pandoc itself sub-parses
-   this) or **CST gap** (parser should have lifted children
-   structurally). Table cells likely defensible; div content not.
-
-2. **Byte walkers inside opaque CST nodes** — every site that
-   walks bytes looking for syntax (tags, attributes, etc.) that
-   the parser already saw. Known starting set:
-   - `split_html_block_by_tags` (line ~1200) — splits HTML_BLOCK
-     content per-tag.
-   - `try_div_html_block` (line ~1591) — reparses open-tag attrs +
-     locates closing `</div>` from bytes.
-   - `flush_html_block_text` / `flush_html_block_tail_text` —
-     reparse text chunks between tags.
-   - `interior_starts_with_void_block_tag` — peeks bytes after
-     an inline-block open.
-   For each: identify the CST node whose contents we're
-   re-tokenizing, and what structural shape would let the
-   projector walk children instead.
-
-3. **Context-dependent decisions made at projection time** — every
-   site that picks a pandoc-AST node based on surrounding context
-   (Para vs Plain, RawBlock vs RawInline, matched-pair vs
-   single-emit, demote-on-blank-line, etc.) that the parser could
-   record structurally. Known starting set:
-   - `inline_pending` flag in `split_html_block_by_tags`
-   - `close_butted` Plain/Para rule in `try_div_html_block`
-   - The (just-reverted) Para→Plain demotion attempt
-   For each: identify the CST shape change that would let the
-   projector trivially read the answer.
-
-4. **Map each finding to a parser-side fix** with rough size
-   (PARAGRAPH→PLAIN retag is small; lifting div inner content into
-   CST children is medium; lifting all HTML block bodies is
-   large). Rank by leverage (one fix unlocking multiple projector
-   simplifications) and by blast radius (formatter/linter/LSP
-   impact).
-
-5. **Identify defensible projector logic** explicitly, so we don't
-   try to remove it later. Examples likely in this bucket: table
-   cell sub-parses, attribute Attr struct construction, raw-text
-   formatting (e.g. ATX heading marker counting), tight/loose list
-   classification — anything where pandoc itself does the same
-   computation at AST emission rather than at parse time.
-
-The audit deliverable lands as a section in RECAP.md (or a
-separate `AUDIT.md` if it's long), not as code changes. Code
-changes start in the session AFTER the audit — by then we have a
-prioritized list and can pick the highest-leverage parser fix as
-session 1's actual target. Likely candidates from current
-intuition (subject to revision by the audit): `PARAGRAPH→PLAIN`
-retag (small), lifting `<div>` inner content into CST children
-(medium).
-
-### New traps (folded into Persistent traps)
-
-- Projector is a test-only diagnostic; if a session's diff is
-  mostly in `pandoc_ast.rs`, the fix probably belongs in the
-  parser. (Folded into Projector-as-second-stage-parser smell.)
-- Phases 1–5 "completion" was conformance-completion, not
-  structural-completion. Wrappers retagged; inner block content
-  still opaque. Phase 6 tracks remaining structural lift. (Folded
-  into Phase progress notes.)
+`<style>` and PI gap noted above; folded into Persistent traps as
+"Pandoc tag categorization" addendum.
 
 --------------------------------------------------------------------------------
 
@@ -366,58 +343,59 @@ retag (small), lifting `<div>` inner content into CST children
 Newest first. One line per session: date — phase/sub-target — pass
 count delta — root cause / lever.
 
+- 2026-05-10 — Projector audit; AUDIT.md landed — html 132 → 132 —
+  inventoried `pandoc_ast.rs` (5,696 lines), classified each
+  reparse / byte walker / context-dependent decision as defensible
+  vs CST gap; produced ranked parser-side fix list (#1
+  PARAGRAPH→PLAIN, #2 `html_div_block` structural walk, #3
+  `<div>` inner-block lift, #4 full HTML_BLOCK split).
+- 2026-05-10 — Course correction; aborted projector Para→Plain
+  demotion reverted — html 132 → 132 — projector compensation
+  defeats the diagnostic; added "What this skill is NOT" to
+  SKILL.md and Phase 6 row to track structural-lift work.
 - 2026-05-10 — Strict-block + verbatim closing-form lift (`</p>`,
   `</nav>`, `</section>`, `</pre>`) — html 126 → 132 — new branch in
-  `try_parse_html_block_start` accepts Pandoc closes for any tag in
-  `PANDOC_BLOCK_TAGS ∪ VERBATIM_TAGS` with `closes_at_open_tag: true`;
-  `cannot_interrupt` unchanged so closes interrupt running paragraphs;
-  retroactively fixed orphan `</div>` via existing dispatcher retag.
+  `try_parse_html_block_start` accepts Pandoc closes for `PANDOC_BLOCK_TAGS
+  ∪ VERBATIM_TAGS` with `closes_at_open_tag: true`; closes interrupt
+  running paragraphs.
 - 2026-05-10 — Inline-block close lift + matched-pair-abandons-on-void-interior
-  (`<video>\n<source>\nfallback\n</video>`, `</video>`/`</button>`/`</embed>`
-  standalone) — html 122 → 126 — accept closing forms under Pandoc with
-  `closes_at_open_tag: true`; new `interior_starts_with_void_block_tag`
-  helper in projector; single-RawBlock emit on no-match-open / fresh-block-close
-  closes the previously-recursive tail-text reparse.
-- 2026-05-10 — Multi-line void open-tag recognition (`<embed\n
-  src="x">`) — html 117 → 122 — generalized
-  `find_multiline_open_end` over tag name + simple per-line
-  TEXT/NEWLINE emit; void early-exit returns `end_line_idx + 1`.
-- 2026-05-10 — Incomplete open-tag projector recursion fix
-  (`<embed\n` etc. with no `>`) — html 113 → 117 — new
-  `pandoc_html_open_tag_closes` gate in `block_dispatcher`; CM
+  — html 122 → 126 — `closes_at_open_tag: true` for closing forms;
+  `interior_starts_with_void_block_tag` helper in projector; single-RawBlock
+  emit closes recursive tail-text reparse.
+- 2026-05-10 — Multi-line void open-tag recognition (`<embed\n …>`) —
+  html 117 → 122 — generalized `find_multiline_open_end` over tag name;
+  void early-exit returns `end_line_idx + 1`.
+- 2026-05-10 — Incomplete open-tag projector recursion fix — html 113 →
+  117 — `pandoc_html_open_tag_closes` gate in `block_dispatcher`; CM
   type-6 stays liberal.
 - 2026-05-10 — Phase 3 void-element `eitherBlockOrInline` lift
-  (`<embed>`, `<area>`, `<source>`, `<track>`) — html 105 → 113 —
-  new `PANDOC_VOID_BLOCK_TAGS` + `closes_at_open_tag: bool`;
-  projector void-tag branch with `inline_pending` rule; split
-  `flush_html_block_text` (demotes) vs `flush_html_block_tail_text`
-  (preserves Para).
+  (`<embed>`, `<area>`, `<source>`, `<track>`) — html 105 → 113 — new
+  `PANDOC_VOID_BLOCK_TAGS` + `closes_at_open_tag`; projector void-tag
+  branch with `inline_pending` rule; split `_text` (demotes) vs
+  `_tail_text` (preserves) helpers.
 - 2026-05-09 — Phase 3 `eitherBlockOrInline` non-void lift (`<iframe>`,
-  `<button>`, `<video>`, `<del>`, etc.) — html 94 → 105 — context-aware
-  projector with `inline_pending` flag + parser-side
-  `cannot_interrupt`; blocked iframe (#287) unblocked.
-- 2026-05-09 — Phase 3 corpus expansion (HTML5 sectioning + grouping:
-  `<header>`, `<footer>`, `<main>`, `<details>`, `<figure>`,
-  `<figcaption>`, `<nav>`) — html 87 → 94 — pure corpus growth + doc
-  comment update; documented `eitherBlockOrInline` gap.
-- 2026-05-09 — `<DIV>` losslessness fix + Phase 3 dialect-divergent
-  `blockHtmlTags` split — html 87 → 87 then 80 → 87 — source-byte
-  fix in `emit_div_open_tag_tokens`; CM/Pandoc block-tag lists split.
+  `<button>`, `<video>`, `<del>`, …) — html 94 → 105 — context-aware
+  projector with `inline_pending` + parser `cannot_interrupt`; #287
+  unblocked.
+- 2026-05-09 — Phase 3 HTML5 sectioning + grouping corpus (header,
+  footer, main, details, figure, figcaption, nav) — html 87 → 94 —
+  pure corpus growth.
+- 2026-05-09 — `<DIV>` losslessness fix + dialect-divergent
+  `blockHtmlTags` split — html 80 → 87 — source-byte fix in
+  `emit_div_open_tag_tokens`; CM/Pandoc lists split.
 - 2026-05-09 — Phase 5 `<div>` Plain/Para promotion + multi-line
-  open-tag HTML_ATTRS lift + cross-boundary refs inheritance —
-  html 62 → 80 — projector-only Plain demotion; per-line HTML_ATTRS
-  nodes; `build_refs_ctx_inherited` + inner `RefsCtx` swap via
+  open-tag HTML_ATTRS lift + cross-boundary refs inheritance — html
+  62 → 80 — `build_refs_ctx_inherited` + inner `RefsCtx` swap via
   `mem::take`.
 - 2026-05-08 — Phase 5 depth-aware nested `<div>` close scan +
-  projector-level `markdown_in_html_blocks` for non-sectioning block
-  tags — html 47 → 62 — `count_tag_balance` + `depth_aware` field;
-  byte-aware `split_html_block_by_tags`.
-- 2026-05-08 — Phase 4 declarations / CDATA / comments / PIs —
-  html 27 → 47 — pandoc gate on type-4/type-5 + corpus pin.
-- 2026-05-08 — Phase 3 sectioning + verbatim negative-space pin —
-  html 17 → 27 — pure corpus growth.
+  projector `markdown_in_html_blocks` for non-sectioning block tags —
+  html 47 → 62 — `count_tag_balance`, `depth_aware`; byte-aware
+  `split_html_block_by_tags`.
+- 2026-05-08 — Phase 4 declarations / CDATA / comments / PIs — html
+  27 → 47 — pandoc gate on type-4/type-5 + corpus pin.
+- 2026-05-08 — Phase 3 sectioning + verbatim negative-space pin — html
+  17 → 27 — pure corpus growth.
 - 2026-05-08 — Phase 2 `<span>` inline lift — html 9 → 17 —
   `INLINE_HTML_SPAN` retag + `HTML_ATTRS` restructure.
-- 2026-05-08 — Phase 1 `<div>` block lift (issue #263 closed) —
-  html 0 → 9 — `HTML_BLOCK_DIV` wrapper retag + `HTML_ATTRS`
-  open-tag tokenization.
+- 2026-05-08 — Phase 1 `<div>` block lift (issue #263 closed) — html
+  0 → 9 — `HTML_BLOCK_DIV` retag + `HTML_ATTRS` open-tag tokenization.
