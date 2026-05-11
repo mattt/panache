@@ -1353,16 +1353,66 @@ fn emit_html_block_structural(node: &SyntaxNode, out: &mut Vec<Block>) {
     for child in node.children() {
         match child.kind() {
             SyntaxKind::HTML_BLOCK_TAG => {
-                let mut text = child.text().to_string();
-                while text.ends_with('\n') {
-                    text.pop();
-                }
+                let text = open_tag_raw_block_text(&child);
                 out.push(Block::RawBlock("html".to_string(), text));
             }
             SyntaxKind::BLANK_LINE => {}
             _ => collect_block(&child, out),
         }
     }
+}
+
+/// Produce the `RawBlock` text for an `HTML_BLOCK_TAG` (open or close)
+/// under the structural lift. Trailing newlines are always trimmed
+/// (pandoc emits the tag bytes only). When the tag contains an
+/// `HTML_ATTRS` structural region, the text is canonicalized to
+/// pandoc's single-line form `<tagname attr1 attr2 ...>`:
+/// multi-line opens collapse to one line, inter-attribute whitespace
+/// normalizes to a single space, and any trailing whitespace before
+/// `>` is dropped. Open tags without structural HTML_ATTRS (e.g.
+/// `<form>`) and close tags (`</form>`) keep their literal text.
+fn open_tag_raw_block_text(tag: &SyntaxNode) -> String {
+    let has_attrs = tag.children().any(|c| c.kind() == SyntaxKind::HTML_ATTRS);
+    if has_attrs {
+        let mut name_prefix: Option<String> = None;
+        let mut attrs: Vec<String> = Vec::new();
+        for child in tag.children_with_tokens() {
+            match child {
+                NodeOrToken::Token(t) if t.kind() == SyntaxKind::TEXT => {
+                    let text = t.text();
+                    if name_prefix.is_none() && text.starts_with('<') {
+                        if let Some(gt_idx) = text.find('>') {
+                            // Whole-line shape (`<form>` etc., shouldn't
+                            // reach here because has_attrs would be
+                            // false). Defensive: emit literal prefix.
+                            return text[..=gt_idx].to_string();
+                        }
+                        name_prefix = Some(text.to_string());
+                    }
+                }
+                NodeOrToken::Node(n) if n.kind() == SyntaxKind::HTML_ATTRS => {
+                    let attr_text = n.text().to_string();
+                    let trimmed = attr_text.trim();
+                    if !trimmed.is_empty() {
+                        attrs.push(trimmed.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut result = name_prefix.unwrap_or_default();
+        for attr in &attrs {
+            result.push(' ');
+            result.push_str(attr);
+        }
+        result.push('>');
+        return result;
+    }
+    let mut text = tag.text().to_string();
+    while text.ends_with('\n') {
+        text.pop();
+    }
+    text
 }
 
 /// Walk `content`'s bytes and split at every complete block-level HTML tag.

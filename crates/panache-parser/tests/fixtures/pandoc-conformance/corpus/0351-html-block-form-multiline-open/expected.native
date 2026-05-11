@@ -1,0 +1,6 @@
+[ RawBlock
+    (Format "html") "<form id=\"contact\" class=\"primary\">"
+, Para
+    [ Str "Hello" , Space , Strong [ Str "world" ] , Str "." ]
+, RawBlock (Format "html") "</form>"
+]

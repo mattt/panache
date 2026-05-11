@@ -206,6 +206,22 @@ back into a session entry only if it's purely historical.
   one immediately-following `WHITESPACE` token; handles arbitrary
   nesting depth (`> > <div>`). Don't reintroduce `node.text()` on
   these paths until the parser-side structural lift inside bq lands.
+- **Projector RawBlock emission of lifted open `HTML_BLOCK_TAG`
+  must canonicalize when structural `HTML_ATTRS` are present.**
+  Multi-line open tags carry literal source bytes
+  (`<form\n  id="x"\n  class="y">`) — feeding these to RawBlock
+  diverges from pandoc-native's canonical single-line form
+  (`<form id="x" class="y">`). `normalize_native` preserves
+  whitespace inside `"..."` string literals, so the conformance
+  harness sees the divergence. Use `open_tag_raw_block_text` in
+  `pandoc_ast.rs`: walk `children_with_tokens`, take the leading
+  `<tagname` TEXT, append each `HTML_ATTRS`'s trimmed text
+  separated by single spaces, append `>`. Single-line opens
+  without HTML_ATTRS (`<form>`, `</form>`) keep their literal
+  text. Don't substitute `node.text()` on the open-tag emission
+  path even if the literal looks correct — it diverges on
+  multi-line and on non-canonical whitespace within attribute
+  regions.
 
 ### Refs / footnotes / heading-id resolution
 
@@ -361,59 +377,55 @@ and stay.
 | 3 | Sectioning + verbatim corpus pin; `eitherBlockOrInline` lift | **Conformance landed** — non-void (2026-05-09); void (`<embed>`/`<area>`/`<source>`/`<track>`) (2026-05-10). Implementation leans on projector-side `inline_pending` tracking + byte walker; CST still opaque for split/matched-pair shapes. |
 | 4 | Comments, PIs, declarations, CDATA projection | **Conformance landed** (2026-05-08); type-4 CM lowercase still gappy. CST opaque (these constructs project as RawBlock / RawInline). |
 | 5 | `markdown_in_html_blocks` interaction edge cases | **Conformance landed** — depth-aware nested div, Plain/Para promotion, refs inheritance, **projector-level splitter** (`split_html_block_by_tags` byte walker + `parse_pandoc_blocks` recursive reparse), outer-matched-pair-abandons-on-void-interior. **The structural CST lift was deferred** — Phase 5's mechanism is the projector reparsing bytes, not the parser emitting structure. |
-| 6 (new) | Lift inner HTML block content into structural CST children — `HTML_BLOCK_DIV` gets `PARAGRAPH` / `LIST` / etc. as direct children; `split_html_block_by_tags` / `flush_html_block_*` / `parse_pandoc_blocks` collapse into trivial CST walks; `PARAGRAPH→PLAIN` retag at adjacent-HTML-block boundary. | **All `<div>` shapes outside blockquotes lift structurally (2026-05-11)**: clean multi-line, trailing-on-open, butted-close, indented-close, same-line, empty / blank-only. **HTML blocks inside blockquotes project correctly via projector marker-strip (2026-05-11)**. **Fix #4 (non-div strict-block body lift) clean multi-line landed (2026-05-11)** for `<form>`, `<section>`, `<header>`, `<nav>`, `<aside>`, `<article>`, `<footer>`, `<p>`, `<table>`, `<tr>`, `<td>`, …. **Fix #4 shape extension landed (2026-05-11)** for non-div butted-close (`<form>\nfoo</form>`), open-trailing (`<form>foo\n…\n</form>`), and same-line (`<form>foo</form>`). All non-bq non-div strict-block shapes outside blockquotes now lift. `HTML_ATTRS` is emitted for non-div strict-block opens too (e.g. `<section id="intro">`) — salsa picks up those ids as anchor declarations. Multi-line non-div opens and bq-wrapped non-div shapes still take the legacy `split_html_block_by_tags` byte-walker fallback. Matched-pair inline-block (`<video>`/`<iframe>`/`<button>`) still byte-walker. Pass count progression: 132 → 137 → 140 → 141 → 142 → 145 → 148 → 151 → 154 → 157 (3 new corpus cases). |
-
-Multi-line `<div>` open-tag structural HTML_ATTRS lift landed
-(2026-05-09). Multi-line void open-tag now lifts via
-`find_multiline_open_end` + simple per-line TEXT/NEWLINE emission
-(2026-05-10). Inline-block / void closing forms (`</video>`,
-`</embed>`) start single-line `RawBlock`s under Pandoc (2026-05-10).
-Strict-block / verbatim closing forms (`</p>`, `</nav>`, `</section>`,
-`</pre>`) likewise lift under Pandoc, with `closes_at_open_tag: true`
-and CAN interrupt a running paragraph (no `cannot_interrupt` gate)
-(2026-05-10).
+| 6 (new) | Lift inner HTML block content into structural CST children — `HTML_BLOCK_DIV` gets `PARAGRAPH` / `LIST` / etc. as direct children; `split_html_block_by_tags` / `flush_html_block_*` / `parse_pandoc_blocks` collapse into trivial CST walks; `PARAGRAPH→PLAIN` retag at adjacent-HTML-block boundary. | **All `<div>` shapes outside blockquotes lift structurally (2026-05-11)**: clean multi-line, trailing-on-open, butted-close, indented-close, same-line, empty / blank-only. **HTML blocks inside blockquotes project correctly via projector marker-strip (2026-05-11)**. **Fix #4 (non-div strict-block body lift) clean multi-line landed (2026-05-11)** for `<form>`, `<section>`, `<header>`, `<nav>`, `<aside>`, `<article>`, `<footer>`, `<p>`, `<table>`, `<tr>`, `<td>`, …. **Fix #4 shape extension landed (2026-05-11)** for non-div butted-close, open-trailing, and same-line. **Fix #4 multi-line open-tag lift landed (2026-05-11)** for non-div strict-block tags (`<form\n  id="x"\n  class="y">…`), with `HTML_ATTRS` exposure on each attribute line so salsa picks up multi-line `<section id>` declarations. Projector adds `open_tag_raw_block_text` to canonicalize multi-line open tags to pandoc's single-line `<tag attr1 attr2 ...>` form on RawBlock emission. All non-bq non-div strict-block shapes outside blockquotes (single-line + multi-line opens) now lift. Bq-wrapped non-div shapes still take the legacy `split_html_block_by_tags` byte-walker fallback. Matched-pair inline-block (`<video>`/`<iframe>`/`<button>`) still byte-walker. Pass count progression: 132 → 137 → 140 → 141 → 142 → 145 → 148 → 151 → 154 → 157 → 159 (2 new corpus cases). |
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-11 (Phase 6 / Fix #4 shape extension: non-div strict-block butted-close, open-trailing, same-line)
+## Latest session — 2026-05-11 (Phase 6 / Fix #4 multi-line open-tag lift for non-div strict-block)
 
-Extended the same-day clean-multi-line Fix #4 lift to the three
-remaining non-div strict-block shapes outside blockquotes:
-butted-close (`<form>\nfoo</form>`), open-trailing
-(`<form>foo\n…\n</form>`), same-line (`<form>foo</form>`). All three
-now lift to structural CST (open `HTML_BLOCK_TAG` split into
-`TEXT("<form") + (HTML_ATTRS)? + TEXT(">")` + body PLAIN/PARAGRAPH +
-close `HTML_BLOCK_TAG`). Projector's existing
-`html_block_has_structural_lift` fast path picks them up unchanged.
+Extended the same-day Fix #4 shape lift to the remaining
+non-bq-wrapped non-div strict-block shape: multi-line open tags like
+`<form\n  id="x"\n  class="y">…`. Parser now recognizes the
+multi-line open via `find_multiline_open_end` and emits structural
+`HTML_ATTRS` regions per attribute line via the generalized
+`emit_multiline_open_tag_with_attrs(tag_name)` helper (renamed from
+`emit_multiline_div_open_tag`). The body lift uses the existing
+`emit_html_block_body_lifted` path — body lines between open and
+close tags parse as fresh Pandoc markdown into structural CST
+children. Salsa's existing `AttributeNode` descendants walk picks up
+multi-line `<section id="intro">` ids as anchor declarations.
 
-**Pass count**: html 154 → 157, total 347 → 350.
+**Projector canonicalization**: multi-line open `HTML_BLOCK_TAG`
+nodes carry literal source bytes (`<form\n  id="x"\n  class="y">`),
+which would diverge from pandoc-native's `<form id="x" class="y">`
+on RawBlock emission. `normalize_native` preserves whitespace inside
+string literals, so the conformance harness sees the divergence.
+New `open_tag_raw_block_text` helper in `pandoc_ast.rs` reconstructs
+the open-tag text from structural tokens when `HTML_ATTRS` regions
+are present, joining `<tagname` + ` ` + each attr (trimmed) + `>`.
+Single-line opens without structural HTML_ATTRS keep their literal
+text (already canonical).
+
+**Pass count**: html 157 → 159, total 350 → 352.
 
 ### What landed
 
-- Generalized `emit_div_open_tag_tokens` → `emit_open_tag_tokens(line,
-  tag_name, lift_trailing)` (parameterize prefix length + name match).
-  Single helper now drives both `<div>` and non-div lifts.
-- Generalized `probe_same_line_div_lift` → `probe_same_line_lift(line,
-  tag_name)`.
-- New `probe_open_tag_line_has_close_gt` — admits open-trailing where
-  the old `probe_clean_open_tag_line` rejected it. The trailing bytes
-  get captured into `pre_content` for the recursive parse.
-- New `same_line_strict_lift_safe` flag; the `same_line_closed` branch
-  dispatches via a single `same_line_lift_tag: Option<&str>` so div
-  and non-div share the split-pre_content path.
-- Removed the strict-block leading-whitespace gate on `close_split` —
-  `LastParaDemote::OnlyIfLast` already handles butted-close demotion.
-- Same-line non-div uses `OnlyIfLast`; div same-line keeps
-  `SkipTrailingBlanks`.
-
-### Side effect — `HTML_ATTRS` on non-div strict-block
-
-`emit_open_tag_tokens` now emits structural `HTML_ATTRS` for non-div
-strict-block opens too (`<section id="intro">`, `<form id="x">`, …).
-Salsa's existing descendants walk picks up those ids as anchor
-declarations — pandoc-native does NOT (keeps as RawBlock), but matches
-user intent. No conformance regression (pandoc-native text-equality
-sees the same `RawBlock "<section id=\"intro\">"`).
+- Generalized `emit_multiline_div_open_tag` →
+  `emit_multiline_open_tag_with_attrs(tag_name)` (parameterize
+  `prefix_len = 1 + tag_name.len()`).
+- Extended `multiline_open_end` detection in `parse_html_block` to
+  Pandoc-lift-eligible strict-block tags via
+  `is_pandoc_lift_eligible_strict_block_tag`.
+- Removed `multiline_open_end.is_none()` requirement from
+  `strict_block_tag_name`; added multi-line branch to
+  `strict_block_lift` (`multiline_open_end.is_some()` ⇒ eligible —
+  `find_multiline_open_end` already verified the close `>`).
+- Open-tag dispatch: multi-line div + non-div lifts share
+  `emit_multiline_open_tag_with_attrs`; void / other keep
+  `emit_multiline_open_tag_simple`.
+- New `open_tag_raw_block_text` projector helper canonicalizes
+  the RawBlock text from structural tokens when `HTML_ATTRS` are
+  present.
 
 ### Suggested next sub-targets
 
@@ -422,32 +434,36 @@ sees the same `RawBlock "<section id=\"intro\">"`).
    Once lifted, `inline_pending` and
    `interior_starts_with_void_block_tag` can be pruned.
 2. **Parser-side lift inside blockquotes** (medium). `> <div>...`,
-   `> <form>...` still take projector marker-strip; parser-side lift
-   would unify the path.
-3. **Multi-line open-tag lift for non-div strict-block** (small).
-   Mirror `find_multiline_open_end` + `emit_multiline_div_open_tag`.
-4. **Prune projector byte walkers** once 1–3 land.
+   `> <form>...` still take projector marker-strip; parser-side
+   lift would unify the path and let us delete
+   `collect_html_block_text_skip_bq_markers`.
+3. **Prune projector byte walkers** once 1–2 land —
+   `split_html_block_by_tags` / `flush_html_block_*` /
+   `parse_pandoc_blocks` would lose their last in-tree callers.
 
 ### Files in committable diff
 
 - `crates/panache-parser/src/parser/blocks/html_blocks.rs` — gate +
-  helper generalizations (~110 ins / ~80 del).
+  helper generalization (~20 net ins).
+- `crates/panache-parser/src/pandoc_ast.rs` — `open_tag_raw_block_text`
+  helper, called from `emit_html_block_structural` (~50 ins).
 - `crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/` —
-  cases 0348–0350 (form butted-close, open-trailing, same-line).
-- `crates/panache-parser/tests/fixtures/cases/html_block_strict_block_lift_shapes_{pandoc,commonmark}/`
-  + snapshots + runner — paired parser fixture; pins CM/Pandoc divergence.
-- `tests/fixtures/cases/html_block_strict_block_lift_shapes/` +
-  runner — formatter golden.
-- Three intentional CST snapshot updates (writer_html_blocks,
-  paragraph_demote_strict_pandoc, strict_block_inner_lift_pandoc):
-  open-tag split + HTML_ATTRS exposure for non-div tags.
-- Allowlist (ids 348–350 + section comment), report.txt + JSON.
+  cases 0351–0352 (form multi-line open, section multi-line open
+  with id).
+- `crates/panache-parser/tests/fixtures/cases/html_block_strict_block_multiline_open_{pandoc,commonmark}/`
+  + snapshots + runner — paired parser fixture; pins CM/Pandoc
+  divergence (CM keeps opaque `HTML_BLOCK_CONTENT`, Pandoc lifts).
+- `tests/fixtures/cases/html_block_strict_block_multiline_open/` +
+  runner — formatter golden (idempotent, unchanged formatting).
+- Allowlist (ids 351–352 + section comment), report.txt + JSON.
 
-### New traps
+### New trap
 
-Folded into Persistent traps under "Refs / footnotes / heading-id
-resolution": salsa exposure of `<section id>` / `<form id>` /
-non-div strict-block ids as anchor declarations is intentional.
+Folded into Persistent traps under "Projector tag splitting":
+projector emission of lifted open `HTML_BLOCK_TAG` must canonicalize
+to pandoc's single-line form when structural `HTML_ATTRS` are
+present — literal multi-line bytes diverge under
+`normalize_native`'s in-string whitespace preservation.
 
 --------------------------------------------------------------------------------
 
@@ -456,10 +472,7 @@ non-div strict-block ids as anchor declarations is intentional.
 Newest first. One line per session: date — phase/sub-target — pass
 count delta — root cause / lever.
 
-- 2026-05-11 — Phase 6 / Fix #4 non-div strict-block clean multi-line body lift — html 151 → 154 — `is_pandoc_lift_eligible_strict_block_tag` + `html_block_has_structural_lift` projector fast path; `LastParaDemote::OnlyIfLast`; recursive `parse_with_refdefs` graft.
-- 2026-05-11 — Phase 6 empty / blank-only `<div>` structural lift — html 148 → 151 — `div_has_structural_inner` inverted to "no `HTML_BLOCK_CONTENT` children"; absence-of-`HTML_BLOCK_CONTENT` becomes the projector signal for a fully lifted body.
-- 2026-05-11 — Phase 6 bq-wrapped HTML blocks projector marker-strip — html 142 → 148 — `collect_html_block_text_skip_bq_markers` drops BLOCK_QUOTE_MARKER+WHITESPACE before byte-reparse.
-- 2026-05-11 — Phase 6 Fix #3 `<div>` shape lifts (clean multi-line, trailing-on-open, butted-close, indented-close, same-line) — html 142 → 142 — recursive `parse_with_refdefs` + `graft_subtree`; cleanness predicates; `probe_same_line_div_lift`.
+- 2026-05-11 — Phase 6 / Fix #4 non-div strict-block shape sweep (clean multi-line body, butted-close, open-trailing, same-line, empty `<div>`, bq-wrapped projector marker-strip, `<div>` shape lifts) — html 142 → 157 — `is_pandoc_lift_eligible_strict_block_tag`, `html_block_has_structural_lift`, `LastParaDemote::OnlyIfLast/SkipTrailingBlanks/Never`, `parse_with_refdefs` graft, `collect_html_block_text_skip_bq_markers`, generalized `emit_open_tag_tokens` + `probe_same_line_lift`.
 - 2026-05-10 → 2026-05-11 — Phase 6 cannot_interrupt (`<style>`, PI, `</script>`, `<script type=math/tex>`) + Fix #1/#2 — html 132 → 142 — PARAGRAPH→PLAIN retag at YesCanInterrupt; `is_closing` field; `is_math_tex_script_open`; pandoc `isInlineTag` (issue #10643).
 - 2026-05-10 — Strict-block/verbatim closing-form lift, multi-line void open-tag, incomplete-open recursion fix, Phase 3 void `eitherBlockOrInline` — html 105 → 132 — close-tag branches, `closes_at_open_tag`, `pandoc_html_open_tag_closes` gate, `PANDOC_VOID_BLOCK_TAGS`.
 - 2026-05-09 — Phase 3 + Phase 5 (non-void eitherBlockOrInline; HTML5 sectioning; `<DIV>` losslessness; Plain/Para; multi-line attrs; refs inheritance) — html 62 → 105 — projector `inline_pending` + parser `cannot_interrupt`; CM/Pandoc blockHtmlTags split; `build_refs_ctx_inherited`.

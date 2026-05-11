@@ -1,0 +1,28 @@
+---
+source: crates/panache-parser/tests/golden_parser_cases.rs
+expression: cst_output
+---
+DOCUMENT@0..57
+  HTML_BLOCK@0..57
+    HTML_BLOCK_TAG@0..40
+      TEXT@0..5 "<form"
+      NEWLINE@5..6 "\n"
+      WHITESPACE@6..8 "  "
+      HTML_ATTRS@8..20
+        TEXT@8..20 "id=\"contact\""
+      NEWLINE@20..21 "\n"
+      WHITESPACE@21..23 "  "
+      HTML_ATTRS@23..38
+        TEXT@23..38 "class=\"primary\""
+      TEXT@38..39 ">"
+      NEWLINE@39..40 "\n"
+    BLANK_LINE@40..41
+      BLANK_LINE@40..41 "\n"
+    PARAGRAPH@41..48
+      TEXT@41..47 "Hello."
+      NEWLINE@47..48 "\n"
+    BLANK_LINE@48..49
+      BLANK_LINE@48..49 "\n"
+    HTML_BLOCK_TAG@49..57
+      TEXT@49..56 "</form>"
+      NEWLINE@56..57 "\n"

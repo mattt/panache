@@ -1,0 +1,6 @@
+[ RawBlock
+    (Format "html") "<section id=\"intro\" class=\"lead\">"
+, Header 1 ( "heading" , [] , [] ) [ Str "Heading" ]
+, Para [ Str "Body" , Space , Str "paragraph." ]
+, RawBlock (Format "html") "</section>"
+]

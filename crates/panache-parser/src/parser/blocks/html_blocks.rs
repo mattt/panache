@@ -695,13 +695,16 @@ pub(crate) fn parse_html_block_with_wrapper(
     // Detect a multi-line open tag.
     // - `<div>` (Pandoc lift): we tokenize each line structurally so the
     //   salsa anchor walk picks up `id` from the HTML_ATTRS region.
+    // - Pandoc strict-block tags eligible for the Fix #4 lift (`<form>`,
+    //   `<section>`, `<header>`, …): same structural emission, exposing
+    //   `id` to the salsa anchor walk and enabling the body lift below.
     // - Void block tags (`<embed>`, `<area>`, `<source>`, `<track>`):
     //   without this, the parser closes the block after line 0 and the
     //   remainder of the open tag falls into following paragraphs;
     //   pandoc-native treats the whole multi-line open tag as a single
-    //   `RawBlock`. Emission for void/non-div tags uses simple per-line
+    //   `RawBlock`. Emission for void tags uses simple per-line
     //   TEXT + NEWLINE (no HTML_ATTRS — the projector doesn't read attrs
-    //   from these tags).
+    //   from void tags).
     let multiline_open_end = if bq_depth == 0 {
         match (wrapper_kind, &block_type) {
             (SyntaxKind::HTML_BLOCK_DIV, _) => {
@@ -715,6 +718,19 @@ pub(crate) fn parse_html_block_with_wrapper(
                     ..
                 },
             ) => find_multiline_open_end(lines, start_pos, first_inner, tag_name),
+            (
+                _,
+                HtmlBlockType::BlockTag {
+                    tag_name,
+                    is_verbatim: false,
+                    closed_by_blank_line: false,
+                    depth_aware: true,
+                    closes_at_open_tag: false,
+                    is_closing: false,
+                },
+            ) if is_pandoc_lift_eligible_strict_block_tag(tag_name) => {
+                find_multiline_open_end(lines, start_pos, first_inner, tag_name)
+            }
             _ => None,
         }
     } else {
@@ -779,40 +795,46 @@ pub(crate) fn parse_html_block_with_wrapper(
     // and same-line (`<form>foo</form>`). Multi-line open and
     // blockquote-wrapped non-div shapes still fall through to the
     // byte-walker path.
-    let strict_block_tag_name: Option<&str> = if wrapper_kind == SyntaxKind::HTML_BLOCK
-        && bq_depth == 0
-        && multiline_open_end.is_none()
-    {
-        match &block_type {
-            HtmlBlockType::BlockTag {
-                tag_name,
-                is_verbatim: false,
-                closed_by_blank_line: false,
-                depth_aware: true,
-                closes_at_open_tag: false,
-                is_closing: false,
-            } if is_pandoc_lift_eligible_strict_block_tag(tag_name) => Some(tag_name.as_str()),
-            _ => None,
-        }
-    } else {
-        None
-    };
+    let strict_block_tag_name: Option<&str> =
+        if wrapper_kind == SyntaxKind::HTML_BLOCK && bq_depth == 0 {
+            match &block_type {
+                HtmlBlockType::BlockTag {
+                    tag_name,
+                    is_verbatim: false,
+                    closed_by_blank_line: false,
+                    depth_aware: true,
+                    closes_at_open_tag: false,
+                    is_closing: false,
+                } if is_pandoc_lift_eligible_strict_block_tag(tag_name) => Some(tag_name.as_str()),
+                _ => None,
+            }
+        } else {
+            None
+        };
     // Same-line `<form>foo</form>` shape: the open line already
     // balances the block (`depth <= 0`). Lift only when the trailing
     // bytes after the open `>` end with `</tag>` and contain exactly
     // one close + zero nested opens.
     let same_line_strict_lift_safe = strict_block_tag_name.is_some_and(|name| {
-        depth <= 0 && {
+        multiline_open_end.is_none() && depth <= 0 && {
             let (line_no_nl, _) = strip_newline(first_inner);
             probe_same_line_lift(line_no_nl, name)
         }
     });
-    // Strict-block lift gate: accept either a clean / open-trailing
-    // open line (depth > 0, open `>` is present with quote-aware
-    // matching) or a safe same-line shape.
+    // Strict-block lift gate: accept (a) a multi-line open tag spanning
+    // `lines[start_pos..=multiline_open_end]`, or (b) a clean / open-
+    // trailing single-line open (depth > 0, open `>` is present with
+    // quote-aware matching), or (c) a safe same-line shape.
     let strict_block_lift = strict_block_tag_name.is_some_and(|name| {
         let (line_no_nl, _) = strip_newline(first_inner);
-        if depth > 0 {
+        if multiline_open_end.is_some() {
+            // `find_multiline_open_end` already verified the open tag
+            // closes with a quote-aware `>` somewhere in lines
+            // `start_pos+1..=end`. No same-line trailing content to
+            // probe; defer trailing-on-close-`>`-line handling to a
+            // future session (rare in practice).
+            true
+        } else if depth > 0 {
             probe_open_tag_line_has_close_gt(line_no_nl, name)
         } else {
             same_line_strict_lift_safe
@@ -842,7 +864,11 @@ pub(crate) fn parse_html_block_with_wrapper(
 
     if let Some(end_line_idx) = multiline_open_end {
         if wrapper_kind == SyntaxKind::HTML_BLOCK_DIV {
-            emit_multiline_div_open_tag(builder, lines, start_pos, end_line_idx);
+            emit_multiline_open_tag_with_attrs(builder, lines, start_pos, end_line_idx, "div");
+        } else if let Some(name) = strict_block_tag_name
+            && strict_block_lift
+        {
+            emit_multiline_open_tag_with_attrs(builder, lines, start_pos, end_line_idx, name);
         } else {
             emit_multiline_open_tag_simple(builder, lines, start_pos, end_line_idx);
         }
@@ -1627,25 +1653,29 @@ pub(crate) fn pandoc_html_open_tag_closes(
     false
 }
 
-/// Emit a multi-line `<div>` open tag spanning `lines[start_pos..=end_line_idx]`
-/// as structural CST tokens. Bytes are byte-identical to the source — only
-/// tokenization granularity changes so `AttributeNode::cast(HTML_ATTRS)` finds
-/// the attribute region.
+/// Emit a multi-line open tag spanning `lines[start_pos..=end_line_idx]` as
+/// structural CST tokens, exposing the attribute region as `HTML_ATTRS` for
+/// `AttributeNode::cast` to find. Bytes are byte-identical to the source —
+/// only tokenization granularity changes. Used for `<div>` (Pandoc dialect)
+/// and non-div strict-block tags (`<form>`, `<section>`, …) under the
+/// Phase 6 structural lift.
 ///
-/// Per-line layout:
-/// - Line 0: TEXT("<div") + (optional WHITESPACE + HTML_ATTRS) + NEWLINE
+/// Per-line layout (with `prefix_len = 1 + tag_name.len()`):
+/// - Line 0: TEXT("<{tag_name}") + (optional WHITESPACE + HTML_ATTRS) + NEWLINE
 /// - Lines 1..N-1: (optional WHITESPACE indent) + HTML_ATTRS + NEWLINE
 /// - Line N (last): (optional WHITESPACE indent) + (HTML_ATTRS + WHITESPACE)?
 ///   + TEXT(">") + (TEXT(trailing))? + NEWLINE
 ///
 /// Bytes inside HTML_ATTRS may include trailing whitespace before the next
 /// newline; `parse_html_attribute_list` tolerates whitespace.
-fn emit_multiline_div_open_tag(
+fn emit_multiline_open_tag_with_attrs(
     builder: &mut GreenNodeBuilder<'static>,
     lines: &[&str],
     start_pos: usize,
     end_line_idx: usize,
+    tag_name: &str,
 ) {
+    let prefix_len = 1 + tag_name.len();
     for (line_idx, line) in lines
         .iter()
         .enumerate()
@@ -1655,20 +1685,20 @@ fn emit_multiline_div_open_tag(
         let (line_no_nl, newline_str) = strip_newline(line);
 
         if line_idx == start_pos {
-            // Line 0: leading indent (if any) + "<div" + (whitespace +
-            // attrs)?. The closing `>` is on a later line, so any
-            // remaining bytes after "<div" on this line are the start of
-            // the attribute region.
+            // Line 0: leading indent (if any) + "<{tag_name}" + (whitespace
+            // + attrs)?. The closing `>` is on a later line, so any
+            // remaining bytes after "<{tag_name}" on this line are the
+            // start of the attribute region.
             let bytes = line_no_nl.as_bytes();
             let indent_end = bytes.iter().position(|&b| b != b' ').unwrap_or(bytes.len());
             if indent_end > 0 {
                 builder.token(SyntaxKind::WHITESPACE.into(), &line_no_nl[..indent_end]);
             }
-            // Defensive: caller verified the line starts with `<div`.
+            // Defensive: caller verified the line starts with `<{tag_name}`.
             let after_indent = &line_no_nl[indent_end..];
-            if after_indent.len() >= 4 {
-                builder.token(SyntaxKind::TEXT.into(), &after_indent[..4]); // "<div"
-                let rest = &after_indent[4..];
+            if after_indent.len() >= prefix_len {
+                builder.token(SyntaxKind::TEXT.into(), &after_indent[..prefix_len]);
+                let rest = &after_indent[prefix_len..];
                 emit_attr_region(builder, rest);
             } else {
                 builder.token(SyntaxKind::TEXT.into(), after_indent);
@@ -1780,7 +1810,7 @@ fn emit_multiline_open_tag_simple(
 
 /// Emit the trailing portion of `<div`'s line 0 — i.e. anything after the
 /// `<div` literal up to end-of-line. Called only from
-/// `emit_multiline_div_open_tag`. The `>` is on a later line, so this is
+/// `emit_multiline_open_tag_with_attrs`. The `>` is on a later line, so this is
 /// pure attribute (and possibly inter-attribute whitespace).
 fn emit_attr_region(builder: &mut GreenNodeBuilder<'static>, region: &str) {
     if region.is_empty() {
