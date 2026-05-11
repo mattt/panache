@@ -393,3 +393,6 @@
 
 # html-block (`</script>` close cannot interrupt a paragraph under Pandoc — `foo\n</script>\n` stays as `Para[foo, SoftBreak, RawInline</script>]` matching pandoc-native. Pandoc's `isInlineTag` SPECIAL-CASES `</script>` (close form) to always be inline, regardless of `<script>` open being a block start. `<script>` open WITHOUT `type="math/tex…"` still interrupts; `<script>` open WITH `type="math/tex…"` should also be inline (pandoc inlines it) but recognizing this requires plumbing the attr through the BlockTag payload — left for a follow-up. Parser-side: added `is_closing: bool` field to `HtmlBlockType::BlockTag`; `cannot_interrupt` matches `is_closing && tag_name == "script"`.)
 333
+
+# citation (bracketed citation prefix may contain ordinary parens and `\@`-escaped at-signs without aborting citation detection; matches pandoc's NormalCitation with the prefix captured as ordinary inlines, e.g. `[see (Smith 1999) and @doe99]` and `[see \@ref(svm) and @bischl_applied_2024]`)
+334

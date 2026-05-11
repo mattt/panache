@@ -177,6 +177,7 @@ golden_test_cases!(
     crlf_raw_blocks,
     crlf_yaml_metadata,
     citations,
+    citation_prefix_paren_escape_idempotency_278,
     definition_list,
     definition_list_heading_content,
     definition_list_nesting,

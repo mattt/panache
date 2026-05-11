@@ -1,0 +1,87 @@
+[ Para
+    [ Str "Citation"
+    , Space
+    , Str "prefix"
+    , Space
+    , Str "with"
+    , Space
+    , Str "parentheses"
+    , Space
+    , Cite
+        [ Citation
+            { citationId = "doe99"
+            , citationPrefix =
+                [ Str "see"
+                , Space
+                , Str "(Smith"
+                , Space
+                , Str "1999)"
+                , Space
+                , Str "and"
+                ]
+            , citationSuffix = []
+            , citationMode = NormalCitation
+            , citationNoteNum = 1
+            , citationHash = 0
+            }
+        ]
+        [ Str "[see"
+        , Space
+        , Str "(Smith"
+        , Space
+        , Str "1999)"
+        , Space
+        , Str "and"
+        , Space
+        , Str "@doe99]"
+        ]
+    , Space
+    , Str "in"
+    , Space
+    , Str "a"
+    , Space
+    , Str "sentence."
+    ]
+, Para
+    [ Str "Citation"
+    , Space
+    , Str "prefix"
+    , Space
+    , Str "with"
+    , Space
+    , Str "escaped"
+    , Space
+    , Str "at-sign"
+    , Space
+    , Cite
+        [ Citation
+            { citationId = "bischl_applied_2024"
+            , citationPrefix =
+                [ Str "see"
+                , Space
+                , Str "@ref(svm)"
+                , Space
+                , Str "and"
+                ]
+            , citationSuffix = []
+            , citationMode = NormalCitation
+            , citationNoteNum = 2
+            , citationHash = 0
+            }
+        ]
+        [ Str "[see"
+        , Space
+        , Str "\\@ref(svm)"
+        , Space
+        , Str "and"
+        , Space
+        , Str "@bischl_applied_2024]"
+        ]
+    , Space
+    , Str "in"
+    , Space
+    , Str "a"
+    , Space
+    , Str "sentence."
+    ]
+]

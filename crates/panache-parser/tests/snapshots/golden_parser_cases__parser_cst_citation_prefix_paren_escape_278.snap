@@ -1,0 +1,27 @@
+---
+source: crates/panache-parser/tests/golden_parser_cases.rs
+expression: cst_output
+---
+DOCUMENT@0..96
+  PARAGRAPH@0..35
+    TEXT@0..4 "xxx "
+    CITATION@4..33
+      LINK_START@4..5 "["
+      CITATION_CONTENT@5..26 "see (Smith 1999) and "
+      CITATION_MARKER@26..27 "@"
+      CITATION_KEY@27..32 "doe99"
+      LINK_DEST@32..33 "]"
+    TEXT@33..34 "."
+    NEWLINE@34..35 "\n"
+  BLANK_LINE@35..36
+    BLANK_LINE@35..36 "\n"
+  PARAGRAPH@36..96
+    TEXT@36..40 "xxx "
+    CITATION@40..94
+      LINK_START@40..41 "["
+      CITATION_CONTENT@41..73 "see also Section \\@re ..."
+      CITATION_MARKER@73..74 "@"
+      CITATION_KEY@74..93 "bischl_applied_2024"
+      LINK_DEST@93..94 "]"
+    TEXT@94..95 "."
+    NEWLINE@95..96 "\n"

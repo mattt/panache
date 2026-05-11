@@ -51,11 +51,6 @@ pub(crate) fn try_parse_bracketed_citation(text: &str) -> Option<(usize, &str)> 
                 has_citation = true;
                 break;
             }
-            b'(' if bracket_depth == 0 => {
-                // Opening paren at top level suggests this might be a link [text](url)
-                // Not a citation
-                break;
-            }
             _ => {
                 pos += 1;
             }
@@ -336,6 +331,14 @@ fn emit_bracketed_citation_content(builder: &mut GreenNodeBuilder, content: &str
     let mut iter = content.char_indices().peekable();
 
     while let Some((idx, ch)) = iter.next() {
+        // Backslash escapes (e.g. `\@`, `\[`, `\]`) suppress citation/separator
+        // recognition for the following character — matching Pandoc, which
+        // treats the escape as a literal in the citation prefix/suffix.
+        if ch == '\\' {
+            iter.next();
+            continue;
+        }
+
         if ch == '@' || (ch == '-' && matches!(iter.peek(), Some((_, '@')))) {
             if idx > text_start {
                 builder.token(
@@ -556,5 +559,26 @@ mod tests {
     fn test_parse_bracketed_citation_escaped_bracket() {
         let result = try_parse_bracketed_citation(r"[@doe99 with \] escaped]");
         assert_eq!(result, Some((24, r"@doe99 with \] escaped")));
+    }
+
+    #[test]
+    fn test_parse_bracketed_citation_paren_in_prefix() {
+        // Pandoc treats parens in the citation prefix as ordinary text;
+        // they must not abort citation detection.
+        let result = try_parse_bracketed_citation("[see (Smith 1999) and @doe99]");
+        assert_eq!(result, Some((29, "see (Smith 1999) and @doe99")));
+    }
+
+    #[test]
+    fn test_parse_bracketed_citation_escaped_at_in_prefix() {
+        // Pandoc accepts \@ref(label) inside the citation prefix without
+        // mistaking it for a citation marker; the actual citation is the
+        // unescaped @key that follows.
+        let result =
+            try_parse_bracketed_citation(r"[see also \@ref(svm) and @bischl_applied_2024]");
+        assert_eq!(
+            result,
+            Some((46, r"see also \@ref(svm) and @bischl_applied_2024"))
+        );
     }
 }
