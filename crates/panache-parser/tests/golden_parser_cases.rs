@@ -323,6 +323,8 @@ golden_test_cases!(
     html_block_strict_block_multiline_open_pandoc,
     html_block_video_close_standalone_commonmark,
     html_block_video_close_standalone_pandoc,
+    html_block_video_matched_pair_commonmark,
+    html_block_video_matched_pair_pandoc,
     html_block_video_source_fallback_pandoc,
     html_inline_span_with_id_commonmark,
     html_inline_span_with_id_pandoc,

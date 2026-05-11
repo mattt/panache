@@ -5,6 +5,11 @@ expression: cst_output
 ---
 DOCUMENT@0..26
   HTML_BLOCK@0..26
-    HTML_BLOCK_TAG@0..26
-      TEXT@0..25 "<button>Click me</but ..."
+    HTML_BLOCK_TAG@0..8
+      TEXT@0..7 "<button"
+      TEXT@7..8 ">"
+    PLAIN@8..16
+      TEXT@8..16 "Click me"
+    HTML_BLOCK_TAG@16..26
+      TEXT@16..25 "</button>"
       NEWLINE@25..26 "\n"

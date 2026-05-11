@@ -232,30 +232,34 @@ pub fn is_pandoc_void_block_tag_name(name: &str) -> bool {
 
 /// Whether the given tag name is eligible for the Phase 6 / Fix #4
 /// structural body lift inside an `HTML_BLOCK` wrapper: it's a Pandoc
-/// strict-block tag (`PANDOC_BLOCK_TAGS`) that is NOT verbatim, NOT in
-/// the `eitherBlockOrInline` set, and NOT void. These are the tags
-/// where pandoc parses the body as fresh markdown between RawBlock
-/// emissions of the open/close tags — exactly the shape we can lift
-/// into structural CST children.
+/// block-level tag (strict-block from `PANDOC_BLOCK_TAGS` OR non-void
+/// inline-block from `PANDOC_INLINE_BLOCK_TAGS`) that is NOT verbatim
+/// and NOT void. These are the tags where pandoc parses the body as
+/// fresh markdown between RawBlock emissions of the open/close tags —
+/// exactly the shape we can lift into structural CST children.
+///
+/// Inline-block tags (`<video>`, `<iframe>`, `<button>`, …) have an
+/// additional gate at the lift-gate site: the lift is abandoned when
+/// the body's first non-blank content is a void block tag at a
+/// fresh-block position (`<video>\n<source ...>\n</video>` projects
+/// per-tag rather than matched-pair, mirroring pandoc).
 ///
 /// `<div>` is intentionally excluded — it has its own lift path
 /// (`HTML_BLOCK_DIV` wrapper retag) with different demotion rules
 /// (Plain/Para keyed on `close_butted`, not on trailing blank line).
-fn is_pandoc_lift_eligible_strict_block_tag(name: &str) -> bool {
+fn is_pandoc_lift_eligible_block_tag(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    if !PANDOC_BLOCK_TAGS.contains(&lower.as_str()) {
-        return false;
-    }
     if VERBATIM_TAGS.contains(&lower.as_str()) {
-        return false;
-    }
-    if PANDOC_INLINE_BLOCK_TAGS.contains(&lower.as_str()) {
         return false;
     }
     if PANDOC_VOID_BLOCK_TAGS.contains(&lower.as_str()) {
         return false;
     }
-    lower != "div"
+    if lower == "div" {
+        return false;
+    }
+    PANDOC_BLOCK_TAGS.contains(&lower.as_str())
+        || PANDOC_INLINE_BLOCK_TAGS.contains(&lower.as_str())
 }
 
 /// Information about a detected HTML block opening.
@@ -728,7 +732,7 @@ pub(crate) fn parse_html_block_with_wrapper(
                     closes_at_open_tag: false,
                     is_closing: false,
                 },
-            ) if is_pandoc_lift_eligible_strict_block_tag(tag_name) => {
+            ) if is_pandoc_lift_eligible_block_tag(tag_name) => {
                 find_multiline_open_end(lines, start_pos, first_inner, tag_name)
             }
             _ => None,
@@ -805,7 +809,7 @@ pub(crate) fn parse_html_block_with_wrapper(
                     depth_aware: true,
                     closes_at_open_tag: false,
                     is_closing: false,
-                } if is_pandoc_lift_eligible_strict_block_tag(tag_name) => Some(tag_name.as_str()),
+                } if is_pandoc_lift_eligible_block_tag(tag_name) => Some(tag_name.as_str()),
                 _ => None,
             }
         } else {
@@ -824,10 +828,14 @@ pub(crate) fn parse_html_block_with_wrapper(
     // Strict-block lift gate: accept (a) a multi-line open tag spanning
     // `lines[start_pos..=multiline_open_end]`, or (b) a clean / open-
     // trailing single-line open (depth > 0, open `>` is present with
-    // quote-aware matching), or (c) a safe same-line shape.
+    // quote-aware matching), or (c) a safe same-line shape. For
+    // inline-block matched-pair tags (`<video>`, `<iframe>`, `<button>`,
+    // …) the lift additionally abandons when the body starts at a
+    // fresh-block position with a void block tag — pandoc-native pins
+    // per-tag emission rather than a matched-pair lift in that case.
     let strict_block_lift = strict_block_tag_name.is_some_and(|name| {
         let (line_no_nl, _) = strip_newline(first_inner);
-        if multiline_open_end.is_some() {
+        let shape_ok = if multiline_open_end.is_some() {
             // `find_multiline_open_end` already verified the open tag
             // closes with a quote-aware `>` somewhere in lines
             // `start_pos+1..=end`. No same-line trailing content to
@@ -838,7 +846,21 @@ pub(crate) fn parse_html_block_with_wrapper(
             probe_open_tag_line_has_close_gt(line_no_nl, name)
         } else {
             same_line_strict_lift_safe
+        };
+        if !shape_ok {
+            return false;
         }
+        if !is_pandoc_inline_block_tag_name(name) {
+            return true;
+        }
+        !inline_block_void_interior_abandons(
+            first_inner,
+            lines,
+            start_pos,
+            multiline_open_end,
+            bq_depth,
+            name,
+        )
     });
 
     // Whether this block participates in the Phase 6 structural lift
@@ -1301,6 +1323,124 @@ fn graft_subtree_as(builder: &mut GreenNodeBuilder<'static>, node: &SyntaxNode, 
         }
     }
     builder.finish_node();
+}
+
+/// Locate the byte index (within `line`) of the open-tag's closing `>`
+/// after a quote-aware scan of `<tag_name ATTRS>`. Returns `None` when
+/// the line doesn't fit the expected shape. Mirrors the inner scan of
+/// `probe_open_tag_line_has_close_gt` but exposes the position so the
+/// caller can slice off the trailing bytes.
+fn locate_open_tag_close_gt(line: &str, tag_name: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let indent_end = bytes
+        .iter()
+        .position(|&b| b != b' ' && b != b'\t')
+        .unwrap_or(bytes.len());
+    let rest = &line[indent_end..];
+    let rest_bytes = rest.as_bytes();
+    let prefix_len = 1 + tag_name.len();
+    if rest_bytes.len() < prefix_len + 1
+        || rest_bytes[0] != b'<'
+        || !rest_bytes[1..prefix_len].eq_ignore_ascii_case(tag_name.as_bytes())
+    {
+        return None;
+    }
+    let after_name = &rest[prefix_len..];
+    let after_name_bytes = after_name.as_bytes();
+    let mut i = 0usize;
+    let mut quote: Option<u8> = None;
+    while i < after_name_bytes.len() {
+        match (quote, after_name_bytes[i]) {
+            (None, b'"') | (None, b'\'') => quote = Some(after_name_bytes[i]),
+            (Some(q), b2) if b2 == q => quote = None,
+            (None, b'>') => return Some(indent_end + prefix_len + i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether `slice` begins (after leading ASCII whitespace) with an
+/// open tag whose name is a Pandoc void block tag (`<source>`,
+/// `<embed>`, `<area>`, `<track>`). Close tags (`</...>`) and non-void
+/// open tags return false.
+///
+/// Used by the inline-block matched-pair lift gate: pandoc-native
+/// abandons the lift when the body's first non-blank content is a
+/// fresh-block void tag (e.g. `<video>\n<source ...>\n</video>`
+/// projects as RawBlock+RawBlock+Plain[..,RawInline</video>], not a
+/// matched-pair lift).
+fn slice_starts_with_void_block_tag(slice: &str) -> bool {
+    let trimmed = slice.trim_start_matches([' ', '\t', '\n', '\r']);
+    if !trimmed.starts_with('<') || trimmed.starts_with("</") {
+        return false;
+    }
+    let Some(tag_end) = parse_open_tag(trimmed) else {
+        return false;
+    };
+    let bytes = trimmed.as_bytes();
+    let mut name_end = 1usize;
+    while name_end < tag_end && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == b'-')
+    {
+        name_end += 1;
+    }
+    if name_end == 1 {
+        return false;
+    }
+    is_pandoc_void_block_tag_name(&trimmed[1..name_end])
+}
+
+/// Whether the body of an inline-block matched-pair (`<video>...`,
+/// `<iframe>...`, `<button>...`) begins at a fresh-block position with
+/// a void block tag — the condition under which pandoc-native abandons
+/// the matched-pair lift. Probes three shapes:
+///
+/// - **Same-line** (`<video><source ...></video>`): trailing bytes
+///   after the open `>` on `first_inner` start with `<source`.
+/// - **Single-line open + multi-line body**: open-trailing on the open
+///   line is empty/whitespace AND the first non-blank body line
+///   (`lines[start_pos+1..]`) starts with a void tag.
+/// - **Multi-line open**: same body-line scan starting at
+///   `lines[multiline_open_end+1..]`.
+///
+/// Returns `false` when the body begins with text, with a close tag,
+/// or with a non-void block tag — those cases all proceed with the
+/// matched-pair lift.
+fn inline_block_void_interior_abandons(
+    first_inner: &str,
+    lines: &[&str],
+    start_pos: usize,
+    multiline_open_end: Option<usize>,
+    bq_depth: usize,
+    tag_name: &str,
+) -> bool {
+    let (line_no_nl, _) = strip_newline(first_inner);
+    let (body_start_line_idx, open_trailing) = match multiline_open_end {
+        Some(end) => (end + 1, ""),
+        None => {
+            let gt = locate_open_tag_close_gt(line_no_nl, tag_name);
+            let trailing = gt.map(|i| &line_no_nl[i + 1..]).unwrap_or("");
+            (start_pos + 1, trailing)
+        }
+    };
+    let trimmed = open_trailing.trim_start_matches([' ', '\t']);
+    if !trimmed.is_empty() {
+        return slice_starts_with_void_block_tag(trimmed);
+    }
+    for line in &lines[body_start_line_idx..] {
+        let inner = if bq_depth > 0 {
+            strip_n_blockquote_markers(line, bq_depth)
+        } else {
+            line
+        };
+        let trimmed = inner.trim_start_matches([' ', '\t', '\n', '\r']);
+        if trimmed.is_empty() {
+            continue;
+        }
+        return slice_starts_with_void_block_tag(trimmed);
+    }
+    false
 }
 
 /// Probe whether the open-tag line has a valid (quote-aware) closing
