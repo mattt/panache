@@ -1404,7 +1404,11 @@ fn open_tag_raw_block_text(tag: &SyntaxNode) -> String {
     // Blockquote-wrapped close tags (`> </form>`, `> </video>`) carry
     // their leading `BLOCK_QUOTE_MARKER + WHITESPACE` tokens inside the
     // close `HTML_BLOCK_TAG` for losslessness. Pandoc-native's RawBlock
-    // text is the tag bytes only — strip those prefix tokens.
+    // text is the tag bytes only — strip those prefix tokens. Leading
+    // 1-3 space indent (captured as a WHITESPACE token before the tag
+    // name TEXT) is likewise stripped: pandoc's HTML block scanner
+    // accepts ≤ 3 leading spaces on the open/close line but doesn't
+    // round-trip them into the RawBlock text.
     let mut text = String::new();
     let mut skip_next_ws = false;
     for child in tag.children_with_tokens() {
@@ -1415,6 +1419,9 @@ fn open_tag_raw_block_text(tag: &SyntaxNode) -> String {
             }
             if skip_next_ws && t.kind() == SyntaxKind::WHITESPACE {
                 skip_next_ws = false;
+                continue;
+            }
+            if text.is_empty() && t.kind() == SyntaxKind::WHITESPACE {
                 continue;
             }
             skip_next_ws = false;

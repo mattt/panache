@@ -267,6 +267,8 @@ golden_test_cases!(
     html_block,
     html_block_button_inline_block_commonmark,
     html_block_button_inline_block_pandoc,
+    html_block_article_leading_indent_commonmark,
+    html_block_article_leading_indent_pandoc,
     html_block_commonmark_type6_type7_commonmark,
     html_block_commonmark_type6_type7_pandoc,
     html_block_dialog_inline_commonmark,
