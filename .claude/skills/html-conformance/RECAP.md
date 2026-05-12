@@ -334,6 +334,21 @@ a parser bug.
     close-butted-ness (Never when leading empty,
     SkipTrailingBlanks otherwise), non-div / matched-pair =
     OnlyIfLast.
+- **`try_split_close_line` whitespace-only `leading` is close-tag
+  indentation, not body content.** For `   </article>`, the helper
+  returns `("   ", "</article>")` but the 3 spaces are HTML-block
+  close-line indent — feeding them to the recursive body parse
+  makes inner produce `PARAGRAPH + BLANK_LINE`, blocking `OnlyIfLast`
+  demotion. Fix at the strict-block lift site (~html_blocks.rs:1432):
+  classify whitespace-only via `leading.bytes().all(|b| b == b' ' || b
+  == b'\t')`, pass `body_leading=""` to the recursive parse, emit
+  the leading bytes as a `WHITESPACE` token inside the close
+  `HTML_BLOCK_TAG` (projector's WS-prefix strip handles it). Keep
+  the demote policy keyed on **original** `leading.is_empty()` so
+  butted-close detection (div SkipTrailingBlanks, non-div OnlyIfLast)
+  still fires. `<div>` was historically correct by accident
+  (SkipTrailingBlanks walked past the spurious BLANK_LINE); the CST
+  shape was wrong and silently fixed by the same change.
 - **Bq messy-lift duplicate-prefix trap.**
   `emit_html_block_body_lifted_bq_messy` injects the close
   line's bq prefix in front of `leading` via BqPrefixState — so
@@ -371,69 +386,66 @@ a parser bug.
 | 3 | Sectioning + verbatim corpus pin; `eitherBlockOrInline` lift | **Conformance landed** — non-void (2026-05-09); void (`<embed>`/`<area>`/`<source>`/`<track>`) (2026-05-10). Implementation leans on projector-side `inline_pending` tracking + byte walker; CST still opaque for split/matched-pair shapes. |
 | 4 | Comments, PIs, declarations, CDATA projection | **Conformance landed** (2026-05-08); type-4 CM lowercase still gappy. CST opaque (these constructs project as RawBlock / RawInline). |
 | 5 | `markdown_in_html_blocks` interaction edge cases | **Conformance landed** — depth-aware nested div, Plain/Para promotion, refs inheritance, **projector-level splitter** (`split_html_block_by_tags` byte walker + `parse_pandoc_blocks` recursive reparse), outer-matched-pair-abandons-on-void-interior. **The structural CST lift was deferred** — Phase 5's mechanism is the projector reparsing bytes, not the parser emitting structure. |
-| 6 (new) | Lift inner HTML block content into structural CST children — `HTML_BLOCK_DIV` / `HTML_BLOCK` get `PARAGRAPH` / `LIST` / etc. as direct children; projector byte walkers become vestigial; `PARAGRAPH→PLAIN` retag at adjacent-HTML-block boundary. | **All non-bq + bq shapes lifted for `<div>` and non-div Pandoc strict-block tags as of 2026-05-12.** Shapes covered: clean multi-line, open-trailing, butted-close, indented-close, same-line, empty / blank-only, multi-line open (clean and trailing). Inline-block matched-pair abandons when body begins with a void block tag (Plain via OnlyIfLast). Bq via three discriminator gates (`bq_clean_lift`, `same_line_bq_lift_tag`, `bq_messy_lift_tag`) — see "Three bq lift gates" trap. Dispatcher's `HTML_BLOCK_DIV` retag gate uses `pandoc_html_open_tag_closes` AND requires `is_closing: false`. Vestigial `<div>` byte walkers pruned 2026-05-11. **Pass count history: 105 → 165** (current). Open shape gaps tracked in latest session's "Suggested next sub-targets". |
+| 6 (new) | Lift inner HTML block content into structural CST children — `HTML_BLOCK_DIV` / `HTML_BLOCK` get `PARAGRAPH` / `LIST` / etc. as direct children; projector byte walkers become vestigial; `PARAGRAPH→PLAIN` retag at adjacent-HTML-block boundary. | **All non-bq + bq shapes lifted for `<div>` and non-div Pandoc strict-block tags as of 2026-05-12.** Shapes covered: clean multi-line, open-trailing, butted-close, indented-close, same-line, empty / blank-only, multi-line open (clean and trailing). Inline-block matched-pair abandons when body begins with a void block tag (Plain via OnlyIfLast). Bq via three discriminator gates (`bq_clean_lift`, `same_line_bq_lift_tag`, `bq_messy_lift_tag`) — see "Three bq lift gates" trap. Dispatcher's `HTML_BLOCK_DIV` retag gate uses `pandoc_html_open_tag_closes` AND requires `is_closing: false`. Vestigial `<div>` byte walkers pruned 2026-05-11. **Pass count history: 105 → 167** (current). Open shape gaps tracked in latest session's "Suggested next sub-targets". |
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-12 (projector strip of leading 1-3 space indent on open/close `HTML_BLOCK_TAG`)
+## Latest session — 2026-05-12 (close-line whitespace-only leading routes to close `HTML_BLOCK_TAG` indent, not body)
 
-Triage probe `2 — Leading 1-3 space indented HTML block keeps
-indent`. Probed: `  <article>\nbody\n</article>` produces correct
-`Plain` body (lift fires) but the projector emitted RawBlock text
-`"  <article>"`, while pandoc emits `"<article>"`. Same for
-`<section>` / `<form>` etc.; `<div>` was already correct because
-its projector path is `html_div_block` (Div block, no
-`open_tag_raw_block_text` call). The leading indent is captured
-as a `WHITESPACE` token inside the open `HTML_BLOCK_TAG` ahead of
-the tag-name `TEXT` — neither bq-prefix-strip nor canonicalizer
-covered that token. Fix: skip leading `WHITESPACE` when the
-accumulator is still empty in the non-attrs branch.
+Top-ranked sub-target from previous session: indented close
+breaks non-div body lift. Probed
+`<article>\nbody\n   </article>\n` — pandoc emits `Plain`,
+panache emitted `Para`. Root cause: `try_split_close_line`
+returned the 3 leading spaces of `   </article>` as `leading`
+(body content); `emit_html_block_body_lifted` appended those
+bytes to `body\n` → recursive parse yielded `PARAGRAPH "body\n"
++ BLANK_LINE "   "`. The trailing `BLANK_LINE` blocked
+`LastParaDemote::OnlyIfLast` from firing, so the body stayed
+`Para` instead of demoting to `Plain`. The `<div>` shape was
+already correct because its `SkipTrailingBlanks` policy walks
+past trailing `BLANK_LINE`s before demoting — the bug existed
+in the CST but didn't surface in pandoc-ast output.
 
-Conformance: html 165 → 166, total 358 → 359. Workspace stable
-(parser-crate 376 → 378 for the new fixture pair).
+Fix at the strict-block / div lift site (~html_blocks.rs:1432):
+when `leading` is whitespace-only, route those bytes into the
+close `HTML_BLOCK_TAG` as a `WHITESPACE` token (which the
+projector strips per the previous session's fix) and pass an
+empty `body_leading` to the recursive parse. Demote policy stays
+keyed on `!leading.is_empty()` of the source so butted-close
+detection (Plain for div via SkipTrailingBlanks, OnlyIfLast for
+non-div) still fires correctly.
+
+Conformance: html 166 → 167, total 359 → 360. Workspace stable
+(parser-crate 378 → 380 for the new fixture pair).
 
 ### What landed
 
-- `pandoc_ast.rs::open_tag_raw_block_text` non-attrs branch
-  drops a leading `WHITESPACE` when `text.is_empty()` (3-line
-  fix). Bq-prefix strip path unchanged; HTML_ATTRS canonicalizer
-  unaffected. Comment updated to call out the new behavior.
-- Parser fixtures `html_block_article_leading_indent_{pandoc,commonmark}`
-  pin the CST shape (leading `WHITESPACE@0..2 "  "` inside open
-  `HTML_BLOCK_TAG` before `TEXT "<article"`). Both dialects share
-  the same shape — included as a pair per the "shape divergence
-  by dialect" convention even though it doesn't diverge today.
-- Corpus 0359 pins the pandoc-native projection.
+- `parser/blocks/html_blocks.rs` ~line 1432: strict-block /
+  div lift close-split path classifies `leading` as
+  whitespace-only vs non-empty content; emits leading WS as
+  `WHITESPACE` token inside close `HTML_BLOCK_TAG`, passes
+  `""` as recursive-parse `body_leading`. Demote policy
+  unchanged (still keyed on original `leading`). ~13 lines
+  net.
+- Parser fixtures `html_block_article_indented_close_{pandoc,
+  commonmark}` pin the new CST shape:
+  `HTML_BLOCK_TAG { WHITESPACE "   " + TEXT "</article>" }`
+  on Pandoc; opaque `HTML_BLOCK_CONTENT` on CommonMark.
+- Corpus 0360 pins pandoc-native: `RawBlock + Plain + RawBlock`.
 
 ### Files in committable diff
 
-- `crates/panache-parser/src/pandoc_ast.rs` (+8/-2)
-- `crates/panache-parser/tests/fixtures/cases/html_block_article_leading_indent_{pandoc,commonmark}/`
+- `crates/panache-parser/src/parser/blocks/html_blocks.rs` (+13/-1)
+- `crates/panache-parser/tests/fixtures/cases/html_block_article_indented_close_{pandoc,commonmark}/`
 - `crates/panache-parser/tests/snapshots/` (2 new)
 - `crates/panache-parser/tests/golden_parser_cases.rs` (+2)
-- `crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/0359-html-block-article-leading-indent/`
+- `crates/panache-parser/tests/fixtures/pandoc-conformance/corpus/0360-html-block-article-indented-close/`
 - `crates/panache-parser/tests/pandoc/{allowlist.txt,report.txt}`
   + `docs/development/pandoc-report.json`
 
 ### Suggested next sub-targets
 
-1. **Indented close tag breaks body lift** (still red).
-   `<article>\nbody\n   </article>\n` → pandoc emits `Plain`;
-   panache emits `Para`. Parser tokenizes the 3 leading spaces
-   on the close line as a separate `BLANK_LINE` *node* before
-   the close `HTML_BLOCK_TAG`, so the body's PARAGRAPH never
-   gets demoted to PLAIN at the close-tag adjacency (the
-   `LastParaDemote::OnlyIfLast` rule needs no trailing
-   `BLANK_LINE` between the last paragraph and the close tag).
-   This is a parser-side bug — a line whose content is
-   `   </article>` is one HTML block close line, not a blank
-   line followed by a close tag. Likely in
-   `parser/blocks/html_blocks.rs` close-line recognition.
-   Same bug exists for `<div>` shape too, but `<div>`'s
-   `html_div_block` path doesn't surface it (Plain demotion is
-   handled differently). Verify by adding the close-indent
-   variant for `<div>` too.
-2. **HTML block tag at start of list-item content not promoted
+1. **HTML block tag at start of list-item content not promoted
    to block.** `- <div id="x">\n  body\n  </div>` → pandoc
    emits a `Div` inside the list item; panache emits
    `Plain [RawInline <div>, SoftBreak, body]` + separate
@@ -441,20 +453,26 @@ Conformance: html 165 → 166, total 358 → 359. Workspace stable
    open tag as inline HTML rather than dispatching block
    detection on the first content line. Substantial; add
    corpus + paired parser fixture first.
-3. **Audit `collect_html_block_text_skip_bq_markers` further**.
+2. **Audit `collect_html_block_text_skip_bq_markers` further**.
    Probe confirmed only ONE corpus case (0339 — `<pre>` verbatim
    in bq) actually exercises the bq-strip branch. Helper is
    ~25 lines; folds nicely into a verbatim-in-bq structural
    lift if taken on next.
-4. **Verbatim-in-bq structural lift** (`> <pre>foo\n> </pre>`).
+3. **Verbatim-in-bq structural lift** (`> <pre>foo\n> </pre>`).
    Lifting structurally eliminates the `emit_html_block` byte-
    path branch.
+4. **Indented close in bq messy-lift path** — `> <article>\n>
+   body\n>    </article>` may have the same WS-only-leading
+   issue at the `bq_messy_lift_tag` site (~line 1370). Probe
+   first; the bq path has its own demotion logic that may or
+   may not exhibit the bug.
 
 ### New traps
 
-- None worth folding. The fix is local and the comment in
-  `open_tag_raw_block_text` itself documents the WS-strip
-  behavior for future readers.
+- **Whitespace-only `leading` from `try_split_close_line` is
+  close-tag indentation, not body content.** Folded into
+  Persistent traps under "Structural lift (Fix #3 / Fix #4
+  family)".
 
 --------------------------------------------------------------------------------
 
@@ -463,6 +481,7 @@ Conformance: html 165 → 166, total 358 → 359. Workspace stable
 Newest first. One line per session: date — phase/sub-target — pass
 count delta — root cause / lever.
 
+- 2026-05-12 — Phase 6 — projector strip leading 1-3 space indent on open/close `HTML_BLOCK_TAG` non-attrs branch — html 165 → 166 — `open_tag_raw_block_text` skips leading `WHITESPACE` when accumulator empty; corpus 0359 pins.
 - 2026-05-12 — Phase 6 fix — `HTML_BLOCK_DIV` retag wrongly fired for standalone `</div>` — html 164 → 165 — dispatcher retag gate destructures `is_closing: false` in the `BlockTag` match arm; corpus 0358 pins.
 - 2026-05-12 — Phase 6 — multi-line open + trailing-on-close-line structural lift — html 161 → 164 — `emit_multiline_open_tag_with_attrs` gains `lift_trailing` + `pre_content` args; `bq_messy_lift_tag` drops `multiline_open_end.is_none()` clause; dispatcher retag gate switches `_cleanly` → `pandoc_html_open_tag_closes` (the `_cleanly` helper removed).
 - 2026-05-12 — Phase 6 — multi-line open in bq structural lift + bq-panic dispatcher gate + formatter goldens for bq messy shapes — html 159 → 161 — `find_multiline_open_end` accepts `bq_depth`; `emit_multiline_open_tag_with_attrs/_simple` take `bq_depth` and re-inject bq prefix tokens past line 0; `bq_lift_tag` drops `multiline_open_end.is_none()`.

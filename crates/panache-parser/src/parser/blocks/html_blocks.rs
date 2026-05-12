@@ -1430,6 +1430,17 @@ pub(crate) fn parse_html_block_with_wrapper(
             let close_split = close_split_tag.and_then(|name| try_split_close_line(line, name));
 
             if let Some((leading, close_part)) = close_split {
+                // Close-line leading that is whitespace-only is close-tag
+                // indentation, not body content (pandoc-native strips it
+                // from the close RawBlock and treats the close as butted —
+                // see `   </tag>` shapes). Route those bytes into the
+                // close `HTML_BLOCK_TAG` as a WHITESPACE token so the
+                // projector strips them; keep the demote policy keyed on
+                // the original leading so butted-close detection (Plain
+                // demotion for div, OnlyIfLast for non-div) still fires.
+                let leading_is_ws_only =
+                    !leading.is_empty() && leading.bytes().all(|b| b == b' ' || b == b'\t');
+                let body_leading = if leading_is_ws_only { "" } else { leading };
                 let policy = if strict_block_lift {
                     LastParaDemote::OnlyIfLast
                 } else if !leading.is_empty() {
@@ -1441,11 +1452,14 @@ pub(crate) fn parse_html_block_with_wrapper(
                     builder,
                     &pre_content,
                     &content_lines,
-                    leading,
+                    body_leading,
                     policy,
                     config,
                 );
                 builder.start_node(SyntaxKind::HTML_BLOCK_TAG.into());
+                if leading_is_ws_only {
+                    builder.token(SyntaxKind::WHITESPACE.into(), leading);
+                }
                 emit_html_block_line(builder, close_part, 0);
                 builder.finish_node();
             } else {
