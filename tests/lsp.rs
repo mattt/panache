@@ -11,6 +11,7 @@
 mod lsp {
     pub(super) mod helpers;
     pub(super) mod test_completion;
+    pub(super) mod test_config_discovery;
     pub(super) mod test_diagnostics;
     pub(super) mod test_document_lifecycle;
     pub(super) mod test_document_links;

@@ -18,6 +18,13 @@ Panache searches for a configuration file in the following order:
 3. **User config**: `~/$XDG_CONFIG_HOME/panache/config.toml` (typically
    `~/.config/panache/config.toml`)
 
+For the project-config step, discovery walks up from the file being processed
+and uses the **nearest** `panache.toml` / `.panache.toml`. In a monorepo, a
+config closer to the file wins over one at the workspace root. When the LSP is
+running, the upward walk is bounded by the editor's workspace root so that
+unrelated configs above the project (e.g. `/tmp/panache.toml`) cannot leak in;
+the CLI keeps its existing unbounded behavior.
+
 ## Basic Options
 
 Here, we list the top-level configuration options that control general behavior.

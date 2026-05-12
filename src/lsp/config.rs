@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tower_lsp_server::Client;
 use tower_lsp_server::ls_types::{MessageType, Uri};
 
@@ -19,7 +19,23 @@ pub(crate) async fn load_config(
     };
 
     if let Some(root) = workspace_root.as_ref() {
-        match crate::config::load(None, root, input_file.as_deref(), None) {
+        // Start the config walk at the file's directory (so a panache.toml
+        // closer to the file shadows one at the workspace root) and stop at
+        // the workspace root itself (so discovery doesn't leak into
+        // unrelated ancestor directories like /tmp or $HOME).
+        let start_dir = input_file
+            .as_deref()
+            .and_then(|p| p.parent())
+            .filter(|p| p.starts_with(root))
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| root.clone());
+        match crate::config::load(
+            None,
+            &start_dir,
+            input_file.as_deref(),
+            None,
+            Some(root.as_path()),
+        ) {
             Ok((config, path)) => {
                 if let Some(p) = path {
                     client

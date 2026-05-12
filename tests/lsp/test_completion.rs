@@ -731,17 +731,7 @@ async fn test_shortcode_unknown_name_returns_none() {
 #[tokio::test]
 async fn test_shortcode_completion_skipped_in_plain_markdown() {
     let server = TestLspServer::new();
-    // Pin flavor to Pandoc explicitly via panache.toml so this test is not
-    // contaminated by any ancestor panache.toml on the host (find_in_tree
-    // walks up the directory tree from the workspace root).
-    let (tmp, doc_uri) = open_quarto_doc_with_files(
-        &server,
-        &[
-            ("panache.toml", "flavor = \"pandoc\"\n"),
-            ("_intro.qmd", ""),
-        ],
-        "doc.md",
-    );
+    let (tmp, doc_uri) = open_quarto_doc_with_files(&server, &[("_intro.qmd", "")], "doc.md");
     let root_uri = Uri::from_file_path(tmp.path()).expect("workspace uri");
     server.initialize(root_uri.as_str()).await;
 

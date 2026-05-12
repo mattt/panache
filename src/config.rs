@@ -220,13 +220,22 @@ fn read_config(path: &Path) -> io::Result<Config> {
     Ok(config)
 }
 
-fn find_in_tree(start_dir: &Path) -> Option<PathBuf> {
+/// Walk up from `start_dir` looking for a `panache.toml` / `.panache.toml`.
+///
+/// If `boundary` is `Some`, the search includes the boundary directory itself
+/// but does not ascend past it — useful when the caller (e.g. the LSP) knows
+/// the project root and wants discovery to honor it instead of leaking into
+/// `/tmp` or `$HOME` ancestors.
+fn find_in_tree(start_dir: &Path, boundary: Option<&Path>) -> Option<PathBuf> {
     for dir in start_dir.ancestors() {
         for name in CANDIDATE_NAMES {
             let p = dir.join(name);
             if p.is_file() {
                 return Some(p);
             }
+        }
+        if matches!(boundary, Some(b) if dir == b) {
+            return None;
         }
     }
     None
@@ -256,11 +265,12 @@ pub fn load(
     start_dir: &Path,
     input_file: Option<&Path>,
     flavor_override: Option<Flavor>,
+    boundary: Option<&Path>,
 ) -> io::Result<(Config, Option<PathBuf>)> {
     let (mut cfg, cfg_path) = if let Some(path) = explicit {
         let cfg = read_config(path)?;
         (cfg, Some(path.to_path_buf()))
-    } else if let Some(p) = find_in_tree(start_dir)
+    } else if let Some(p) = find_in_tree(start_dir, boundary)
         && let Ok(cfg) = read_config(&p)
     {
         (cfg, Some(p))
@@ -546,7 +556,8 @@ mod tests {
         let qmd = tmp.path().join("doc.qmd");
         std::fs::write(&qmd, "").unwrap();
 
-        let (cfg, _) = load(None, tmp.path(), Some(&qmd), Some(Flavor::Pandoc)).expect("load");
+        let (cfg, _) =
+            load(None, tmp.path(), Some(&qmd), Some(Flavor::Pandoc), None).expect("load");
         assert_eq!(cfg.flavor, Flavor::Pandoc);
     }
 
@@ -556,7 +567,7 @@ mod tests {
         let cfg_path = tmp.path().join("panache.toml");
         std::fs::write(&cfg_path, "flavor = \"quarto\"\n").unwrap();
 
-        let (cfg, _) = load(None, tmp.path(), None, Some(Flavor::Gfm)).expect("load");
+        let (cfg, _) = load(None, tmp.path(), None, Some(Flavor::Gfm), None).expect("load");
         assert_eq!(cfg.flavor, Flavor::Gfm);
     }
 
@@ -568,7 +579,7 @@ mod tests {
         let md = tmp.path().join("doc.md");
         std::fs::write(&md, "").unwrap();
 
-        let (cfg, _) = load(None, tmp.path(), Some(&md), Some(Flavor::Gfm)).expect("load");
+        let (cfg, _) = load(None, tmp.path(), Some(&md), Some(Flavor::Gfm), None).expect("load");
         assert_eq!(cfg.flavor, Flavor::Gfm);
     }
 
@@ -583,7 +594,7 @@ mod tests {
         )
         .unwrap();
 
-        let (cfg, _) = load(None, tmp.path(), None, Some(Flavor::Pandoc)).expect("load");
+        let (cfg, _) = load(None, tmp.path(), None, Some(Flavor::Pandoc), None).expect("load");
         assert_eq!(cfg.flavor, Flavor::Pandoc);
         // The user override turns off fenced_divs even though Pandoc default would enable it.
         assert!(!cfg.extensions.fenced_divs);
@@ -605,8 +616,62 @@ mod tests {
         )
         .unwrap();
 
-        let (cfg, _) = load(None, tmp.path(), None, Some(Flavor::Pandoc)).expect("load");
+        let (cfg, _) = load(None, tmp.path(), None, Some(Flavor::Pandoc), None).expect("load");
         assert_eq!(cfg.flavor, Flavor::Pandoc);
         assert!(!cfg.extensions.fenced_divs);
+    }
+
+    #[test]
+    fn find_in_tree_stops_at_boundary() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Place a panache.toml ABOVE the boundary; walking with the boundary
+        // set must not return it.
+        let outside = tmp.path().join("panache.toml");
+        std::fs::write(&outside, "").unwrap();
+        let workspace = tmp.path().join("workspace");
+        let nested = workspace.join("sub");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let found = find_in_tree(&nested, Some(&workspace));
+        assert!(
+            found.is_none(),
+            "boundary must prevent ascent above workspace, got {found:?}"
+        );
+
+        // Without the boundary, the outer config is found (today's CLI behavior).
+        let unbounded = find_in_tree(&nested, None);
+        assert_eq!(unbounded.as_deref(), Some(outside.as_path()));
+    }
+
+    #[test]
+    fn find_in_tree_returns_boundary_local_config() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        let nested = workspace.join("docs");
+        std::fs::create_dir_all(&nested).unwrap();
+        let cfg = workspace.join("panache.toml");
+        std::fs::write(&cfg, "").unwrap();
+
+        let found = find_in_tree(&nested, Some(&workspace));
+        assert_eq!(found.as_deref(), Some(cfg.as_path()));
+    }
+
+    #[test]
+    fn find_in_tree_prefers_nearest_config() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        let inner = workspace.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        let outer_cfg = workspace.join("panache.toml");
+        let inner_cfg = inner.join("panache.toml");
+        std::fs::write(&outer_cfg, "").unwrap();
+        std::fs::write(&inner_cfg, "").unwrap();
+
+        let found = find_in_tree(&inner, Some(&workspace));
+        assert_eq!(
+            found.as_deref(),
+            Some(inner_cfg.as_path()),
+            "nearest config must win"
+        );
     }
 }
