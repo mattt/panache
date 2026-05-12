@@ -333,61 +333,57 @@ a parser bug.
 
 --------------------------------------------------------------------------------
 
-## Latest session — 2026-05-11 (Phase 6 cleanup — prune vestigial `<div>` byte walkers)
+## Latest session — 2026-05-12 (Phase 6 follow-up — formatter goldens for bq messy shapes)
 
-Removed dead `<div>` projector byte walkers in `pandoc_ast.rs`. The
-audit instrumented each candidate fallback with `eprintln!` markers
-and ran the full workspace; zero hits on `html_block` singular's
-`try_div_html_block` check, on `html_div_block`'s byte fallback, or
-on `split_html_block_by_tags`'s matched-pair-div branch. The one
-case still exercising bq-marker stripping is the `<pre>`-inside-bq
-verbatim fixture (`0339-html-block-pre-verbatim-inside-blockquote`).
+Pinned formatter idempotency for the bq messy CST shapes landed in
+Phase 6's Fix #8 (open-trailing, butted-close, same-line, both)
+across `<div>`, non-div strict-block, and inline-block matched-pair
+tags inside blockquotes. Probe-first revealed all six shapes round-
+trip byte-equal to input and pass debug-format losslessness already
+— no code changes needed, just regression pins.
 
 Conformance + workspace stable: 159 html / 352 total, all green.
-Pure deletion — no behavior change. Single-file diff:
-`crates/panache-parser/src/pandoc_ast.rs`, `-207/+37` (~170 net lines
-removed).
+Two new formatter goldens; no source diff.
 
 ### What landed
 
-- Deleted `try_div_html_block`, `parse_div_open_tag_attrs_from_bytes`,
-  `extract_div_inner_and_butted`, `assemble_div_block`,
-  `find_matching_html_close`.
-- Deleted `html_div_block`'s byte fallback (the
-  `collect_html_block_text_skip_bq_markers` + `extract_div...` +
-  `assemble_div_block` chain); replaced with `debug_assert!` +
-  `Block::Div(attr, Vec::new())` defensive return — an unlifted
-  `HTML_BLOCK_DIV` would be a parser bug.
-- Deleted the matched-pair-`<div>` branch inside
-  `split_html_block_by_tags` (lines that did
-  `find_matching_html_close("div")` then `try_div_html_block` for
-  the matched span). Strict-block tags inside an opaque HTML_BLOCK
-  now uniformly emit per-tag RawBlocks.
-- Simplified `html_block` (singular, used by grid-cell reparse) to
-  emit a single `RawBlock` — its `try_div_html_block` check was
-  dead.
-- Updated doc comments on `collect_block` and `emit_html_block` to
-  drop references to the removed byte paths.
+- `tests/fixtures/cases/html_block_div_blockquote_messy_idempotent/`
+  — `<div>` open-trailing, butted-close, same-line, with-attrs, and
+  nested-bq same-line shapes.
+- `tests/fixtures/cases/html_block_strict_blockquote_messy_idempotent/`
+  — `<form>` open-trailing/butted-close/same-line (non-div strict)
+  and `<video>` same-line/open-trailing (inline-block matched-pair).
+- Wired both into `tests/golden_cases.rs` alongside their clean-
+  shape counterparts (`html_block_{div,strict}_blockquote_idempotent`).
+
+### Files in committable diff
+
+- `tests/fixtures/cases/html_block_div_blockquote_messy_idempotent/`
+  (input.md + expected.md, byte-identical)
+- `tests/fixtures/cases/html_block_strict_blockquote_messy_idempotent/`
+  (input.md + expected.md, byte-identical)
+- `tests/golden_cases.rs` (+2 lines wiring the new cases)
 
 ### Suggested next sub-targets
 
 1. **Multi-line open tag inside bq**. `multiline_open_end` is gated
    on `bq_depth == 0`, so `> <section\n>   id="x">\n` still falls
    back to opaque per-line TEXT. Rare in practice; defer unless a
-   real corpus / linter case demands it. If pursued, the lift
-   would need a threaded bq-aware multi-line opener — non-trivial.
-2. **Formatter goldens for bq messy shapes** (deferred from Fix #8).
-   Probe first — likely unchanged since the rendered text is the
-   same, but worth pinning idempotency for the new CST shape.
-3. **Audit `collect_html_block_text_skip_bq_markers` further**.
-   Only one test (the `<pre>`-in-bq verbatim case) exercises real
-   bq-marker stripping. The fallback for multi-line-open-inside-bq
-   would also use it, but no test covers that combo today. The
-   helper is small (~25 lines), so the cost of keeping it is low.
+   real corpus / linter case demands it. Threaded bq-aware
+   multi-line opener — non-trivial.
+2. **Audit `collect_html_block_text_skip_bq_markers` further**. The
+   only live caller is `emit_html_block`'s verbatim-in-bq path
+   (one test: `0339-html-block-pre-verbatim-inside-blockquote`).
+   Helper is small (~25 lines); cost of keeping is low.
+3. **Corpus expansion**. All 352 cases pass; growing coverage means
+   adding new corpus cases for under-covered shapes (e.g. multi-
+   line-open-inside-bq from #1, or pandoc-tag-categorization edge
+   cases at flavor-default boundaries).
 
 ### New trap
 
-None — pruned paths were truly dead.
+None — formatter was already correct; the goldens just pin the
+behavior.
 
 --------------------------------------------------------------------------------
 
@@ -396,9 +392,9 @@ None — pruned paths were truly dead.
 Newest first. One line per session: date — phase/sub-target — pass
 count delta — root cause / lever.
 
+- 2026-05-11 — Phase 6 cleanup — prune vestigial `<div>` byte walkers in `pandoc_ast.rs` — html stable 159 — pure deletion (~170 net lines); `html_div_block` `debug_assert!`s on unlifted HTML_BLOCK_DIV; matched-pair-div branch of `split_html_block_by_tags` removed.
 - 2026-05-11 — Phase 6 bq lift arc (Fix #5 clean + HTML_ATTRS-in-bq followup, Fix #7 same-line, Fix #8 messy = open-trailing/butted-close/both) across div / non-div strict-block / inline-block matched-pair — html stable 159 — three discriminator gates (`bq_clean_lift`, `same_line_bq_lift_tag`, `bq_messy_lift_tag`), `BqPrefixState` re-injection, `inline_block_void_interior_abandons`, `bq_strict_attr_emit_tag_name`, `open_tag_raw_block_text` bq-prefix strip, `leading.is_empty()` close-tag guard.
 - 2026-05-11 — Phase 6 / Fix #4 non-div strict-block shape sweep + multi-line open-tag lift — html 142 → 159 — `is_pandoc_lift_eligible_block_tag`, `html_block_has_structural_lift`, `LastParaDemote::{OnlyIfLast,SkipTrailingBlanks,Never}`, `parse_with_refdefs` graft, `emit_multiline_open_tag_with_attrs`, `open_tag_raw_block_text` canonicalizer.
 - 2026-05-10 → 2026-05-11 — Phase 6 cannot_interrupt + Fix #1/#2 — html 132 → 142 — PARAGRAPH→PLAIN retag at YesCanInterrupt; `is_closing` field; `is_math_tex_script_open`; pandoc `isInlineTag` (issue #10643).
 - 2026-05-10 — Strict-block/verbatim closing-form lift, multi-line void open-tag, incomplete-open recursion fix, Phase 3 void `eitherBlockOrInline` — html 105 → 132 — `closes_at_open_tag`, `pandoc_html_open_tag_closes` gate, `PANDOC_VOID_BLOCK_TAGS`.
-- 2026-05-09 — Phase 3 + Phase 5 (non-void eitherBlockOrInline; HTML5 sectioning; `<DIV>` losslessness; Plain/Para; multi-line attrs; refs inheritance) — html 62 → 105 — projector `inline_pending` + parser `cannot_interrupt`; CM/Pandoc blockHtmlTags split; `build_refs_ctx_inherited`.
-- 2026-05-08 — Phases 1-5 seed (issue #263 closed) — html 0 → 62 — `HTML_BLOCK_DIV`/`INLINE_HTML_SPAN` retag, `HTML_ATTRS` tokenization, sectioning/verbatim corpus pin, depth-aware nested `<div>`.
+- 2026-05-08 → 2026-05-09 — Phases 1-5 seed + projector-side lift (issue #263 closed; non-void eitherBlockOrInline; HTML5 sectioning; `<DIV>` losslessness; Plain/Para; multi-line attrs; refs inheritance) — html 0 → 105 — `HTML_BLOCK_DIV`/`INLINE_HTML_SPAN` retag, `HTML_ATTRS` tokenization, sectioning/verbatim corpus pin, depth-aware nested `<div>`, projector `inline_pending` + parser `cannot_interrupt`, CM/Pandoc blockHtmlTags split, `build_refs_ctx_inherited`.
