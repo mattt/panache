@@ -216,6 +216,7 @@ golden_test_cases!(
     atx_interrupts_paragraph_commonmark,
     list_interrupts_paragraph_commonmark,
     list_item_blockquote_inner_list_siblings,
+    list_item_html_comment_trailing_split,
     list_item_html_div_multiline_open,
     list_item_html_div_multiline_para,
     list_item_html_div_same_line,

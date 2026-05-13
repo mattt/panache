@@ -1,0 +1,6 @@
+[ BulletList
+    [ [ RawBlock (Format "html") "<!-- hi -->"
+      , Plain [ Str "trailing" ]
+      ]
+    ]
+]

@@ -266,7 +266,7 @@ impl ListItemBuffer {
                     .segments
                     .iter()
                     .all(|s| matches!(s, ListItemContent::Text(_)))
-                && try_emit_html_block_lift(builder, &text, config, content_col)
+                && try_emit_html_block_lift(builder, &text, config, content_col, use_paragraph)
             {
                 return;
             }
@@ -321,6 +321,7 @@ fn try_emit_html_block_lift(
     text: &str,
     config: &ParserOptions,
     content_col: usize,
+    use_paragraph: bool,
 ) -> bool {
     let first_line = text.split_inclusive('\n').next().unwrap_or(text);
     let first_line_no_nl = first_line
@@ -341,21 +342,44 @@ fn try_emit_html_block_lift(
     let inner_root = crate::parser::parse_with_refdefs(&parse_text, Some(config.clone()), refdefs);
 
     let children: Vec<SyntaxNode> = inner_root.children().collect();
-    if children.len() != 1 {
+    if children.is_empty() {
         return false;
     }
-    let child = &children[0];
+    let first = &children[0];
     if !matches!(
-        child.kind(),
+        first.kind(),
         SyntaxKind::HTML_BLOCK | SyntaxKind::HTML_BLOCK_DIV
     ) {
         return false;
     }
-    if child.text_range().end() != TextSize::of(parse_text.as_str()) {
+    let total_end = children.last().unwrap().text_range().end();
+    if total_end != TextSize::of(parse_text.as_str()) {
         return false;
     }
-    if child.kind() == SyntaxKind::HTML_BLOCK_DIV {
-        let html_block_tag_count = child
+
+    // Single-child path: existing same-line / fully-contained lift.
+    // Multi-child path: comment/PI trailing-text split — the inner
+    // dispatcher's `try_parse_comment_pi_with_trailing_split` produced
+    // sibling block(s) after the HTML_BLOCK. Accept exactly two children
+    // (HTML_BLOCK + PARAGRAPH); the trailing PARAGRAPH is retagged to
+    // PLAIN for tight list items so the item shape matches pandoc
+    // (`[RawBlock, Plain[trailing]]` for tight, `[RawBlock, Para[...]]`
+    // for loose). N>2 children would require Para→Plain SoftBreak
+    // fusion across HTML-block boundaries (0390 blocked); leave those
+    // shapes to the inline path until that gap closes.
+    let multi_child_trailing = if children.len() == 1 {
+        false
+    } else if children.len() == 2
+        && first.kind() == SyntaxKind::HTML_BLOCK
+        && children[1].kind() == SyntaxKind::PARAGRAPH
+    {
+        true
+    } else {
+        return false;
+    };
+
+    if !multi_child_trailing && first.kind() == SyntaxKind::HTML_BLOCK_DIV {
+        let html_block_tag_count = first
             .children()
             .filter(|c| c.kind() == SyntaxKind::HTML_BLOCK_TAG)
             .count();
@@ -373,8 +397,36 @@ fn try_emit_html_block_lift(
             at_line_start: true,
         })
     };
-    graft_node(builder, child, &mut prefix_state);
+    if multi_child_trailing {
+        graft_node(builder, first, &mut prefix_state);
+        let trailing_kind = if use_paragraph {
+            SyntaxKind::PARAGRAPH
+        } else {
+            SyntaxKind::PLAIN
+        };
+        graft_node_retag_root(builder, &children[1], &mut prefix_state, trailing_kind);
+    } else {
+        graft_node(builder, first, &mut prefix_state);
+    }
     true
+}
+
+fn graft_node_retag_root(
+    builder: &mut GreenNodeBuilder<'static>,
+    node: &SyntaxNode,
+    prefix: &mut Option<LinePrefixState>,
+    new_kind: SyntaxKind,
+) {
+    builder.start_node(new_kind.into());
+    for child in node.children_with_tokens() {
+        match child {
+            rowan::NodeOrToken::Node(n) => graft_node(builder, &n, prefix),
+            rowan::NodeOrToken::Token(t) => {
+                emit_grafted_token(builder, t.kind(), t.text(), prefix);
+            }
+        }
+    }
+    builder.finish_node();
 }
 
 /// Per-line indent-prefix state for the list-item HTML-block lift.

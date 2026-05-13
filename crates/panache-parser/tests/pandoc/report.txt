@@ -1,12 +1,12 @@
 Pandoc-native conformance report (pandoc 3.9.0.2)
-415 / 416 cases passing (99.8%)
+419 / 420 cases passing (99.8%)
 1 failing
 1 blocked-list entries
 
 === Per-section pass / fail ===
   block: 15 pass / 0 fail
   citation: 1 pass / 0 fail
-  html: 222 pass / 1 fail
+  html: 226 pass / 1 fail
   imported: 162 pass / 0 fail
   inline: 15 pass / 0 fail
 
@@ -426,6 +426,10 @@ Pandoc-native conformance report (pandoc 3.9.0.2)
 414
 415
 416
+417
+418
+419
+420
 
 === Passing cases grouped by section ===
 # block
@@ -671,6 +675,10 @@ Pandoc-native conformance report (pandoc 3.9.0.2)
 414
 415
 416
+417
+418
+419
+420
 
 # imported
 26

@@ -526,3 +526,9 @@
 414
 415
 416
+
+# html-block (List-item Comment/PI with trailing text on the same item content: `- <!-- hi --> trailing`, `- <?php foo ?> trailing`, `- <!-- hi -->\n  trailing` project as `BulletList [[RawBlock, Plain [trailing]]]`; loose item `- <!-- hi --> trailing\n\n  more` projects as `BulletList [[RawBlock, Para [trailing], Para [more]]]`. `ListItemBuffer::emit_as_block`'s `try_emit_html_block_lift` accepts the 2-child reparse shape (HTML_BLOCK + PARAGRAPH from the existing Comment/PI trailing-split helper) and retags the trailing PARAGRAPH to PLAIN for tight items based on `use_paragraph`. Multi-line trailing past the same item (N>2 children) still falls through to the inline path — that's the same 0390 SoftBreak fusion gap.)
+417
+418
+419
+420

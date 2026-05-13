@@ -276,6 +276,8 @@ golden_test_cases!(
     html_block_comment_trailing_split_commonmark,
     html_block_comment_trailing_split_pandoc,
     html_block_comment_trailing_split_blockquote_pandoc,
+    html_block_comment_trailing_split_list_item_commonmark,
+    html_block_comment_trailing_split_list_item_pandoc,
     html_block_comment_multiline_trailing_split_pandoc,
     html_block_comment_multiline_trailing_split_blockquote_pandoc,
     html_block_pi_trailing_split_pandoc,

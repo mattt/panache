@@ -477,17 +477,30 @@ impl Formatter {
     /// (these contain only indentation whitespace).
     fn find_content_node(node: &SyntaxNode) -> Option<SyntaxNode> {
         let mut seen_marker = false;
+        let mut seen_leading_html_block = false;
         for el in node.children_with_tokens() {
             match el {
                 rowan::NodeOrToken::Token(t) if t.kind() == SyntaxKind::LIST_MARKER => {
                     seen_marker = true;
                 }
-                rowan::NodeOrToken::Node(n)
-                    if matches!(n.kind(), SyntaxKind::PLAIN | SyntaxKind::PARAGRAPH) =>
-                {
-                    // Only return Plain/PARAGRAPH nodes that come after the marker
-                    if seen_marker {
-                        return Some(n);
+                rowan::NodeOrToken::Node(n) if seen_marker => {
+                    match n.kind() {
+                        SyntaxKind::PLAIN | SyntaxKind::PARAGRAPH => {
+                            // Skip PLAIN/PARAGRAPH trailing a lifted leading
+                            // HTML_BLOCK (the Comment/PI trailing-text-split
+                            // shape `- <!-- hi --> trailing`). The marker
+                            // is emitted by the HTML_BLOCK arm; the trailing
+                            // PLAIN runs through the continuation path.
+                            if seen_leading_html_block {
+                                return None;
+                            }
+                            return Some(n);
+                        }
+                        SyntaxKind::HTML_BLOCK | SyntaxKind::HTML_BLOCK_DIV => {
+                            seen_leading_html_block = true;
+                        }
+                        SyntaxKind::BLANK_LINE => {}
+                        _ => return None,
                     }
                 }
                 _ => {}

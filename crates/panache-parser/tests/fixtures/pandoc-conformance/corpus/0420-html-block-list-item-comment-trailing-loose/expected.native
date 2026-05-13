@@ -1,0 +1,7 @@
+[ BulletList
+    [ [ RawBlock (Format "html") "<!-- hi -->"
+      , Para [ Str "trailing" ]
+      , Para [ Str "more" ]
+      ]
+    ]
+]
