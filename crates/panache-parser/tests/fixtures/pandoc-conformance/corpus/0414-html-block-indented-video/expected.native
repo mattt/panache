@@ -1,0 +1,6 @@
+[ Para
+    [ RawInline (Format "html") "<video>"
+    , Str "x"
+    , RawInline (Format "html") "</video>"
+    ]
+]

@@ -282,6 +282,8 @@ golden_test_cases!(
     html_block_pi_trailing_split_blockquote_pandoc,
     html_block_dialog_inline_commonmark,
     html_block_dialog_inline_pandoc,
+    html_block_indented_style_commonmark,
+    html_block_indented_style_pandoc,
     html_block_div_butted_close_commonmark,
     html_block_div_butted_close_pandoc,
     html_block_div_close_standalone_commonmark,

@@ -1,0 +1,6 @@
+[ BulletList
+    [ [ Para [ Str "text" ]
+      , Para [ RawInline (Format "html") "<!-- hi -->" ]
+      ]
+    ]
+]

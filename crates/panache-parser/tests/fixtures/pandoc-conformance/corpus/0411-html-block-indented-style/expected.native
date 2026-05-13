@@ -1,0 +1,6 @@
+[ Para
+    [ RawInline (Format "html") "<style>"
+    , Str "foo"
+    , RawInline (Format "html") "</style>"
+    ]
+]

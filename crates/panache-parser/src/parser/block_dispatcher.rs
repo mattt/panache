@@ -1887,6 +1887,28 @@ impl BlockParser for HtmlBlockParser {
                         || (!*is_closing
                             && tag_name.eq_ignore_ascii_case("script")
                             && is_math_tex_script_open(ctx.content))));
+        // Pandoc-specific: when an `isInlineTag` construct (the
+        // `cannot_interrupt` set) appears with leading indent BEYOND
+        // the current container's content_col, pandoc-native treats
+        // it as inline-in-paragraph instead of an HTML block. We
+        // return None so the dispatcher falls through to paragraph
+        // parsing, where the inline parser handles the tag as
+        // `RawInline`. Blockquote markers are already stripped from
+        // `ctx.content`; for list-items, `list_indent_info.content_col`
+        // is the column we treat as "column 0" within the item.
+        // CommonMark keeps the RawBlock shape (block-level recognition).
+        if is_pandoc && cannot_interrupt {
+            let leading_spaces = ctx
+                .content
+                .as_bytes()
+                .iter()
+                .take_while(|&&b| b == b' ')
+                .count();
+            let container_col = ctx.list_indent_info.map(|i| i.content_col).unwrap_or(0);
+            if leading_spaces > container_col {
+                return None;
+            }
+        }
         let detection = if cannot_interrupt {
             if ctx.has_blank_before || ctx.at_document_start {
                 BlockDetectionResult::Yes

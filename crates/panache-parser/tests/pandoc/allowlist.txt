@@ -516,3 +516,13 @@
 # html-block (List-item indented Comment/PI with trailing text: `- text\n\n  <!-- hi --> trailing` and `- text\n\n  <?php foo ?> trailing` project as `BulletList [[Para, RawBlock, Para [trailing]]]`. Combined effect of the bq-extended `try_parse_comment_pi_with_trailing_split` (handles trailing-text split structurally) and the new leading-indent strip in `emit_html_block` (strips the 2-space list-item indent from RawBlock first line). Pure corpus pin — no new code beyond what already landed.)
 407
 408
+
+# html-block (Indented `isInlineTag` constructs demote to `Para [RawInline]` under Pandoc: top-level `  <!-- hi -->`, `  <?php foo ?>`, `  <style>foo</style>`, `  <foo>` (Type7), `  </script>`, `  <video>x</video>` (inline-block matched-pair); list-item with EXTRA indent beyond content_col `- text\n\n   <!-- hi -->`; blockquote with extra indent `>   <!-- hi -->`. Parser-side gate in `HtmlBlockParser::detect_prepared`: when `is_pandoc && cannot_interrupt` and the line's leading-space count exceeds `list_indent_info.content_col`, returns `None` so paragraph parsing picks up the line and the inline parser handles the tag as `RawInline`. CommonMark keeps the RawBlock shape (block-level recognition). `<pre>`, `<script>` (regular), `<textarea>` are NOT in the demote set — they keep RawBlock with stripped indent via the existing leading-indent trim.)
+409
+410
+411
+412
+413
+414
+415
+416
