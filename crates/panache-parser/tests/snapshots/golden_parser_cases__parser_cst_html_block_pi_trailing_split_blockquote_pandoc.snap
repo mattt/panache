@@ -1,0 +1,15 @@
+---
+source: crates/panache-parser/tests/golden_parser_cases.rs
+assertion_line: 97
+expression: cst_output
+---
+DOCUMENT@0..26
+  BLOCK_QUOTE@0..26
+    BLOCK_QUOTE_MARKER@0..1 ">"
+    WHITESPACE@1..2 " "
+    HTML_BLOCK@2..16
+      HTML_BLOCK_TAG@2..16
+        TEXT@2..16 "<?php hello ?>"
+    PARAGRAPH@16..26
+      TEXT@16..25 " trailing"
+      NEWLINE@25..26 "\n"

@@ -488,3 +488,13 @@
 387
 388
 389
+
+# html-block (Comment / PI trailing-text split inside a blockquote: `> <!-- hi --> trailing`, `> <!-- multi\n> line --> trailing`, `> <?php ... ?> trailing`, and the nested `> > <!-- hi --> trailing` shape project as `BlockQuote [RawBlock, Para [trailing]]` (matching pandoc-native). Extends `try_parse_comment_pi_with_trailing_split`: removes the `bq_depth == 0` gate, finds the close marker in the bq-stripped inner content, emits the close `HTML_BLOCK_TAG` with bq-prefix tokens for lines past line 0 via `emit_bq_prefix_tokens`, then grafts the trailing recursive parse inside the surrounding `BLOCK_QUOTE` node (the dispatcher's wrapper).)
+391
+392
+393
+394
+
+# html-block (Trailing-whitespace trim for RawBlock projection: `<!-- hi -->   \n` and `<pre>foo</pre>   \n` project as `RawBlock "<!-- hi -->"` and `RawBlock "<pre>foo</pre>"` (matching pandoc-native). Projector-side `emit_html_block` now trims trailing ASCII whitespace (newlines + spaces + tabs) from the collected text instead of only newlines. Interior whitespace is preserved.)
+395
+396

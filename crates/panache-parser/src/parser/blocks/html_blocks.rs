@@ -745,6 +745,7 @@ fn try_parse_comment_pi_with_trailing_split(
     start_pos: usize,
     block_type: &HtmlBlockType,
     wrapper_kind: SyntaxKind,
+    bq_depth: usize,
     config: &ParserOptions,
 ) -> Option<usize> {
     let marker: &str = match block_type {
@@ -753,20 +754,36 @@ fn try_parse_comment_pi_with_trailing_split(
         _ => return None,
     };
 
-    // Find the close marker. Scan from `start_pos` forward; the open
-    // line itself may contain it (same-line `<!-- hi --> trailing`).
+    // Find the close marker in the bq-stripped line content. For
+    // bq_depth == 0 the inner content equals the raw line; for
+    // bq_depth > 0 we look past the `>` markers stripped by the
+    // outer dispatcher (line 0) and emitted as bq prefix below
+    // (lines > 0). `marker_end_in_inner` is the byte offset of the
+    // first byte AFTER the close marker, measured from the start
+    // of the inner (post-strip) content.
     let mut close_line_idx: Option<usize> = None;
-    let mut marker_end_in_line: usize = 0;
+    let mut marker_end_in_inner: usize = 0;
     for (offset, line) in lines[start_pos..].iter().enumerate() {
-        if let Some(pos) = line.find(marker) {
+        let inner = if bq_depth > 0 {
+            strip_n_blockquote_markers(line, bq_depth)
+        } else {
+            line
+        };
+        if let Some(pos) = inner.find(marker) {
             close_line_idx = Some(start_pos + offset);
-            marker_end_in_line = pos + marker.len();
+            marker_end_in_inner = pos + marker.len();
             break;
         }
     }
     let close_line_idx = close_line_idx?;
     let close_line = lines[close_line_idx];
-    let trailing = &close_line[marker_end_in_line..];
+    let close_inner = if bq_depth > 0 {
+        strip_n_blockquote_markers(close_line, bq_depth)
+    } else {
+        close_line
+    };
+    let close_prefix_len = close_line.len() - close_inner.len();
+    let trailing = &close_inner[marker_end_in_inner..];
 
     // Only fire when there is non-whitespace content AFTER the close
     // marker on the close line. The legacy path correctly handles
@@ -788,8 +805,10 @@ fn try_parse_comment_pi_with_trailing_split(
     if close_line_idx == start_pos {
         // Same-line shape: one HTML_BLOCK_TAG containing the close
         // marker's bytes. The newline lives on the trailing sibling.
+        // Line 0's bq prefix (if any) was already emitted by the
+        // outer dispatcher; emit only the inner marker bytes.
         builder.start_node(SyntaxKind::HTML_BLOCK_TAG.into());
-        let close_part = &close_line[..marker_end_in_line];
+        let close_part = &close_inner[..marker_end_in_inner];
         if !close_part.is_empty() {
             builder.token(SyntaxKind::TEXT.into(), close_part);
         }
@@ -797,9 +816,17 @@ fn try_parse_comment_pi_with_trailing_split(
     } else {
         // Multi-line shape: open tag covers lines[start_pos..close],
         // middle lines go inside HTML_BLOCK_CONTENT, close tag holds
-        // only the marker bytes.
+        // only the marker bytes. Line 0's bq prefix was emitted by
+        // the outer dispatcher; subsequent lines (middle + close)
+        // need bq prefix re-emission inside the wrapper.
         builder.start_node(SyntaxKind::HTML_BLOCK_TAG.into());
-        let (line_no_nl, nl) = strip_newline(lines[start_pos]);
+        let first_line = lines[start_pos];
+        let first_inner = if bq_depth > 0 {
+            strip_n_blockquote_markers(first_line, bq_depth)
+        } else {
+            first_line
+        };
+        let (line_no_nl, nl) = strip_newline(first_inner);
         if !line_no_nl.is_empty() {
             builder.token(SyntaxKind::TEXT.into(), line_no_nl);
         }
@@ -811,19 +838,16 @@ fn try_parse_comment_pi_with_trailing_split(
         if close_line_idx > start_pos + 1 {
             builder.start_node(SyntaxKind::HTML_BLOCK_CONTENT.into());
             for content_line in &lines[start_pos + 1..close_line_idx] {
-                let (cl_no_nl, cl_nl) = strip_newline(content_line);
-                if !cl_no_nl.is_empty() {
-                    builder.token(SyntaxKind::TEXT.into(), cl_no_nl);
-                }
-                if !cl_nl.is_empty() {
-                    builder.token(SyntaxKind::NEWLINE.into(), cl_nl);
-                }
+                emit_html_block_line(builder, content_line, bq_depth);
             }
             builder.finish_node();
         }
 
         builder.start_node(SyntaxKind::HTML_BLOCK_TAG.into());
-        let close_part = &close_line[..marker_end_in_line];
+        if bq_depth > 0 && close_prefix_len > 0 {
+            emit_bq_prefix_tokens(builder, &close_line[..close_prefix_len]);
+        }
+        let close_part = &close_inner[..marker_end_in_inner];
         if !close_part.is_empty() {
             builder.token(SyntaxKind::TEXT.into(), close_part);
         }
@@ -876,7 +900,6 @@ pub(crate) fn parse_html_block_with_wrapper(
     // before entering the legacy emission so the CST encodes the
     // sibling structure.
     if config.dialect == crate::options::Dialect::Pandoc
-        && bq_depth == 0
         && matches!(
             block_type,
             HtmlBlockType::Comment | HtmlBlockType::ProcessingInstruction
@@ -887,6 +910,7 @@ pub(crate) fn parse_html_block_with_wrapper(
             start_pos,
             &block_type,
             wrapper_kind,
+            bq_depth,
             config,
         )
     {

@@ -1310,7 +1310,15 @@ fn emit_html_block(node: &SyntaxNode, out: &mut Vec<Block>) {
     // content (e.g. `> <pre>\n> code\n> </pre>`). Outside a blockquote
     // this returns the same bytes as `node.text()`.
     let mut content = collect_html_block_text_skip_bq_markers(node);
-    while content.ends_with('\n') {
+    // Pandoc trims trailing ASCII whitespace (newlines, spaces, tabs)
+    // from RawBlock text — `<!-- hi -->   \n` emits `RawBlock
+    // "<!-- hi -->"`, not `"<!-- hi -->   "`. Interior whitespace is
+    // preserved (e.g. `<pre>foo\n   </pre>` keeps the indented close).
+    while content
+        .as_bytes()
+        .last()
+        .is_some_and(|b| matches!(b, b'\n' | b'\r' | b' ' | b'\t'))
+    {
         content.pop();
     }
     let leading_ws = content
