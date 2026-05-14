@@ -32,6 +32,9 @@ jobs:
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+          prefix-key: "v1-rust"
 
       - name: Install wasm target
         if: matrix.os == 'ubuntu-latest'

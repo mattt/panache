@@ -30,6 +30,9 @@ jobs:
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+          prefix-key: "v1-rust"
 
       - name: Build binary
         run: cargo build --verbose

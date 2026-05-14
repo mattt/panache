@@ -69,6 +69,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          cache-bin: "false"
+          prefix-key: "v1-rust"
 
       - name: Build wheel
         uses: PyO3/maturin-action@v1

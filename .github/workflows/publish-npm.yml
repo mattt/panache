@@ -73,6 +73,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: npm-${{ matrix.target }}
+          cache-bin: "false"
+          prefix-key: "v1-rust"
 
       - name: Install musl tools
         if: matrix.musl
