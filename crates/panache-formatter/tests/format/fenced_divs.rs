@@ -1,7 +1,7 @@
 use panache_formatter::format;
 
 #[test]
-fn fenced_div_strips_leading_blank_line_in_body() {
+fn fenced_div_strips_leading_and_trailing_blank_lines_in_body() {
     let input = "\
 ::: declare
 
@@ -12,7 +12,6 @@ A
     let expected = "\
 ::: declare
 A
-
 :::
 ";
     let output = format(input, None, None);
@@ -20,7 +19,7 @@ A
 }
 
 #[test]
-fn fenced_div_in_list_strips_leading_blank_line_in_body() {
+fn fenced_div_in_list_strips_leading_and_trailing_blank_lines_in_body() {
     let input = "\
 - item
 
@@ -35,7 +34,6 @@ fn fenced_div_in_list_strips_leading_blank_line_in_body() {
 
   ::: {layout-ncol=\"2\"}
   para
-
   :::
 ";
     let output = format(input, None, None);

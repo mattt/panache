@@ -48,7 +48,6 @@ foo bar
 
 ::: declare
 A
-
 :::
 
 B

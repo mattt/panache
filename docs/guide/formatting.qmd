@@ -687,9 +687,10 @@ Output
 
 ## Fenced Divs
 
-Fenced divs are normalized so that there is no blank line between the opening
-fence and the content and no space between the closing fence and the content.
-Attributes are preserved and normalized. With nested divs, the inner div
+Fenced divs are normalized so that blank lines at the boundaries of the div body
+are stripped (no blank line after the opening fence or before the closing fence)
+and runs of blank lines inside the body collapse to a single separator, matching
+pandoc. Attributes are preserved and normalized. With nested divs, the inner div
 
 Input
 

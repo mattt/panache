@@ -2330,25 +2330,18 @@ impl Formatter {
                     })
                     .collect();
 
-                let end = content_children.len();
-                let first_non_blank_kind = content_children[0..end]
+                let trailing_blank_lines = content_children
+                    .iter()
+                    .rev()
+                    .take_while(|child| child.kind() == SyntaxKind::BLANK_LINE)
+                    .count();
+                let first_non_blank_kind = content_children
                     .iter()
                     .find(|child| child.kind() != SyntaxKind::BLANK_LINE)
                     .map(|child| child.kind());
-                let should_strip_leading_blanks = matches!(
-                    first_non_blank_kind,
-                    Some(
-                        SyntaxKind::PARAGRAPH
-                            | SyntaxKind::PLAIN
-                            | SyntaxKind::LIST
-                            | SyntaxKind::LIST_ITEM
-                    )
-                );
-                let start = if should_strip_leading_blanks {
-                    leading_blank_lines
-                } else {
-                    0
-                };
+                let start = leading_blank_lines;
+                let end = content_children.len().saturating_sub(trailing_blank_lines);
+                let end = end.max(start);
 
                 let mut prev_was_blank = false;
                 for (idx, child) in content_children[start..end].iter().enumerate() {

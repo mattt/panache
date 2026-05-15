@@ -45,7 +45,6 @@ python3 -m pip install jupyter matplotlib pandas
 
 Alternatively, once you have the template repo below, you can use the file
 `requirements.txt` to get the packages you need.
-
 :::
 
 ### Clone the Template Repository {#clone-repo}
