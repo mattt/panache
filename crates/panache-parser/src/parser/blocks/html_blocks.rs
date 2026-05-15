@@ -1387,6 +1387,18 @@ pub(crate) fn parse_html_block_with_wrapper(
         if let Some(tag_name) = same_line_lift_tag {
             let (pre_no_nl, post_nl) = strip_newline(&pre_content);
             if let Some((leading, close_part)) = try_split_close_line(pre_no_nl, tag_name) {
+                // `close_part` starts with `</tag` and contains the close
+                // marker followed by any same-line trailing text. Split
+                // off the close marker bytes (`</tag>`) so the close
+                // `HTML_BLOCK_TAG` carries only those bytes; trailing
+                // text is parsed and grafted as a sibling block at the
+                // parent level (matches pandoc-native shape:
+                // `<div>foo</div>bar` → `Div [Plain[foo]] + Para [bar]`).
+                let close_marker_end =
+                    split_close_marker_end(close_part, tag_name).unwrap_or(close_part.len());
+                let close_marker = &close_part[..close_marker_end];
+                let same_line_trailing = &close_part[close_marker_end..];
+
                 // Same-line is always close-butted; div demotes the
                 // trailing Para→Plain via `SkipTrailingBlanks`.
                 // Non-div strict-block uses `OnlyIfLast` (consistent
@@ -1399,12 +1411,36 @@ pub(crate) fn parse_html_block_with_wrapper(
                 };
                 emit_html_block_body_lifted(builder, "", &[], leading, policy, config);
                 builder.start_node(SyntaxKind::HTML_BLOCK_TAG.into());
-                let mut close_line = String::with_capacity(close_part.len() + post_nl.len());
-                close_line.push_str(close_part);
-                close_line.push_str(post_nl);
-                emit_html_block_line(builder, &close_line, 0);
-                builder.finish_node();
-                builder.finish_node(); // HtmlBlock
+                if same_line_trailing.is_empty() {
+                    let mut close_line = String::with_capacity(close_marker.len() + post_nl.len());
+                    close_line.push_str(close_marker);
+                    close_line.push_str(post_nl);
+                    emit_html_block_line(builder, &close_line, 0);
+                    builder.finish_node();
+                    builder.finish_node(); // HtmlBlock
+                } else {
+                    // Close tag holds only the close-marker bytes;
+                    // trailing + newline graft as siblings of the
+                    // wrapper (matches pandoc's per-tag block split).
+                    builder.token(SyntaxKind::TEXT.into(), close_marker);
+                    builder.finish_node(); // HTML_BLOCK_TAG
+                    builder.finish_node(); // HtmlBlock
+
+                    let mut trailing_text =
+                        String::with_capacity(same_line_trailing.len() + post_nl.len());
+                    trailing_text.push_str(same_line_trailing);
+                    trailing_text.push_str(post_nl);
+                    let mut inner_options = config.clone();
+                    let refdefs = config.refdef_labels.clone().unwrap_or_default();
+                    inner_options.refdef_labels = Some(refdefs.clone());
+                    let inner_root = crate::parser::parse_with_refdefs(
+                        &trailing_text,
+                        Some(inner_options),
+                        refdefs,
+                    );
+                    let mut bq = None;
+                    graft_document_children(builder, &inner_root, LastParaDemote::Never, &mut bq);
+                }
                 return start_pos + 1;
             }
         }
@@ -2288,16 +2324,52 @@ fn probe_same_line_lift(line: &str, tag_name: &str) -> bool {
         return false;
     };
     let trailing = &after_name[gt_idx + 1..];
-    let trimmed = trailing.trim_end_matches([' ', '\t']);
+    // Body must contain the close marker; bytes after the close are
+    // accepted as same-line trailing text and grafted as a sibling
+    // block by the caller (e.g. `<div>foo</div>bar` →
+    // `Div [Plain[foo]] + Para [bar]`). Reject nested same-tag opens
+    // and require exactly one close — multiple closes are a malformed
+    // shape that should fall back to the opaque path.
     let close_marker = format!("</{}>", tag_name);
-    if !trimmed
+    if !trailing
         .to_ascii_lowercase()
-        .ends_with(&close_marker.to_ascii_lowercase())
+        .contains(&close_marker.to_ascii_lowercase())
     {
         return false;
     }
     let (opens, closes) = count_tag_balance(trailing, tag_name);
     opens == 0 && closes == 1
+}
+
+/// Locate the byte offset of the first `>` after a `</tag` prefix at
+/// the start of `close_part`. Returns `Some(end_of_close_marker)` so
+/// the caller can split `close_part` into the close-marker bytes
+/// (`</tag>`) and any same-line trailing text. Returns `None` if the
+/// expected prefix shape is missing — caller treats the whole slice
+/// as the close marker (no trailing).
+fn split_close_marker_end(close_part: &str, tag_name: &str) -> Option<usize> {
+    let prefix_len = 2 + tag_name.len();
+    let bytes = close_part.as_bytes();
+    if bytes.len() < prefix_len
+        || bytes[0] != b'<'
+        || bytes[1] != b'/'
+        || !bytes[2..prefix_len].eq_ignore_ascii_case(tag_name.as_bytes())
+    {
+        return None;
+    }
+    // Scan from after `</tag` to the first unquoted `>`.
+    let mut i = prefix_len;
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        match (quote, bytes[i]) {
+            (None, b'"') | (None, b'\'') => quote = Some(bytes[i]),
+            (Some(q), b2) if b2 == q => quote = None,
+            (None, b'>') => return Some(i + 1),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Try to split the close line of an HTML_BLOCK_DIV body into a

@@ -358,19 +358,28 @@ fn try_emit_html_block_lift(
     }
 
     // Single-child path: existing same-line / fully-contained lift.
-    // Multi-child path: comment/PI trailing-text split — the inner
-    // dispatcher's `try_parse_comment_pi_with_trailing_split` produced
-    // sibling block(s) after the HTML_BLOCK. Accept exactly two children
-    // (HTML_BLOCK + PARAGRAPH); the trailing PARAGRAPH is retagged to
-    // PLAIN for tight list items so the item shape matches pandoc
-    // (`[RawBlock, Plain[trailing]]` for tight, `[RawBlock, Para[...]]`
-    // for loose). N>2 children would require Para→Plain SoftBreak
-    // fusion across HTML-block boundaries (0390 blocked); leave those
-    // shapes to the inline path until that gap closes.
+    // Multi-child path: trailing-text split — the inner dispatcher
+    // produced sibling block(s) after the HTML_BLOCK / HTML_BLOCK_DIV.
+    // Sources:
+    //   - `try_parse_comment_pi_with_trailing_split` for `<!--…--> trail`
+    //     and `<?…?> trail` (HTML_BLOCK + PARAGRAPH).
+    //   - Same-line div / non-div strict-block lift's trailing branch
+    //     for `<div>foo</div>bar` (HTML_BLOCK_DIV + PARAGRAPH) and
+    //     `<form>foo</form>bar` (also HTML_BLOCK + PARAGRAPH after the
+    //     existing strict-block matched-pair lift fires).
+    // The trailing PARAGRAPH is retagged to PLAIN for tight list items
+    // so the item shape matches pandoc (`[RawBlock, Plain[trailing]]`
+    // for tight, `[RawBlock, Para[...]]` for loose). N>2 children would
+    // require Para→Plain SoftBreak fusion across HTML-block boundaries
+    // (0390 blocked); leave those shapes to the inline path until that
+    // gap closes.
     let multi_child_trailing = if children.len() == 1 {
         false
     } else if children.len() == 2
-        && first.kind() == SyntaxKind::HTML_BLOCK
+        && matches!(
+            first.kind(),
+            SyntaxKind::HTML_BLOCK | SyntaxKind::HTML_BLOCK_DIV
+        )
         && children[1].kind() == SyntaxKind::PARAGRAPH
     {
         true
@@ -378,7 +387,7 @@ fn try_emit_html_block_lift(
         return false;
     };
 
-    if !multi_child_trailing && first.kind() == SyntaxKind::HTML_BLOCK_DIV {
+    if first.kind() == SyntaxKind::HTML_BLOCK_DIV {
         let html_block_tag_count = first
             .children()
             .filter(|c| c.kind() == SyntaxKind::HTML_BLOCK_TAG)

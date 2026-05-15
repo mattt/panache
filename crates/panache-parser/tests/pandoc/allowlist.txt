@@ -532,3 +532,14 @@
 418
 419
 420
+
+# html-block (Same-line `<div>foo</div>bar` and `<form>foo</form>bar` project as `Div + Para [bar]` and `RawBlock + Plain + RawBlock + Para [bar]` respectively (also bq, list-item, with-id variants). Parser same-line-lift gate now accepts trailing text after `</tag>`: `probe_same_line_lift` checks the close-marker is *contained* in the post-`>` slice (was: ends_with) while still requiring `count_tag_balance == (0, 1)`. The lift body splits the `try_split_close_line` close_part into close-marker bytes (`</tag>` only) and trailing bytes, emits the close `HTML_BLOCK_TAG` with just the marker, finishes the wrapper, then recursively parses the trailing+newline and grafts as siblings via `graft_document_children` (mirrors the existing Comment/PI trailing-split). The list-item buffer's `try_emit_html_block_lift` 2-child branch was widened to also accept `HTML_BLOCK_DIV + PARAGRAPH`. Negative-space pins for `>   <!-- hi --> trailing`, `> > <!-- hi -->`, `>>   <!-- hi -->` (already passing — pin against regression).)
+421
+422
+423
+424
+425
+426
+427
+428
+429

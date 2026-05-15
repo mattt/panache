@@ -247,6 +247,8 @@ golden_test_cases!(
     html_block_div_idempotent,
     html_block_div_multiline_open_trailing_idempotent,
     html_block_div_nested_idempotent,
+    html_block_div_same_line_trailing,
+    list_item_html_div_same_line_trailing,
     html_block_paragraph_demote,
     html_block_paragraph_then_style,
     html_block_pre_close_tag_inline_commonmark,

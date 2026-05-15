@@ -1,0 +1,6 @@
+[ BulletList
+    [ [ Div ( "" , [] , [] ) [ Plain [ Str "foo" ] ]
+      , Plain [ Str "bar" ]
+      ]
+    ]
+]

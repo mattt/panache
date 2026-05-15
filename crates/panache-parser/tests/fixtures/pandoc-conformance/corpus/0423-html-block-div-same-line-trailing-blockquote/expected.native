@@ -1,0 +1,5 @@
+[ BlockQuote
+    [ Div ( "" , [] , [] ) [ Plain [ Str "foo" ] ]
+    , Para [ Str "bar" ]
+    ]
+]

@@ -1,0 +1,8 @@
+[ BlockQuote
+    [ Para
+        [ RawInline (Format "html") "<!-- hi -->"
+        , Space
+        , Str "trailing"
+        ]
+    ]
+]
