@@ -403,7 +403,55 @@ Instead of listing every file, understand the patterns:
 - Delete working files unless absolutely necessary
 - Run `cargo format`/`panache format` directly on files just to check formatting
   **IT FORMATS IN PLACE**. Use `cargo  format < file.md` instead.
-- Update `CHANGELOG.md`. It is handled automatically by semantic release.
+- Update `CHANGELOG.md`. It is handled automatically by versionary.
+
+## Commits
+
+Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+`<type>(<scope>): <subject>`. versionary reads the type to decide the next
+version bump, so picking the right one matters.
+
+**Types**: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `ci`,
+`build`, `style`. Use `feat!` or include `BREAKING CHANGE:` in the body for
+breaking changes.
+
+**Scopes** (most common, derived from the workspace layout): `parser`,
+`formatter`, `linter`, `lsp`, `cli`, `wasm`, `deps`. Omit the scope only when a
+change genuinely spans the whole workspace.
+
+**Subject style**:
+
+- Imperative mood, lowercase, no trailing period (`lift trailing text`, not
+  `Lifts trailing text.`). Imperative isn't required by the CC spec, but it's
+  the broader git convention and matches existing log.
+- Wrap inline code, flags, identifiers, and SyntaxKinds in backticks
+  (``add `{lang}` placeholder``, `` retag `HTML_BLOCK_DIV` ``).
+- Aim for ≤50 chars; 72 is the hard cap (the `<type>(<scope>):` prefix eats
+  10--15 chars, so dependabot-style subjects sometimes spill past 50). Push
+  detail into the body.
+
+**Body** (when warranted):
+
+- Keep it short and to the point. A few short paragraphs at most; often a single
+  sentence is enough. If the subject says it all, skip the body entirely.
+- Explain the *why* and the user-visible effect --- the diff already shows the
+  *what*.
+- Reference the failure mode or pandoc-native shape being fixed when it isn't
+  obvious from the subject.
+- For pandoc-conformance work, include the pass-rate delta (e.g.
+  `html 226 → 235 (+9), total 419 → 428`) so the recap matches what landed.
+- Wrap at \~72 chars; pass via heredoc to preserve formatting.
+
+**Don't**:
+
+- Push commits or open pull requests unless the user explicitly asks. Local
+  commits are fine; anything that publishes to the remote (`git push`,
+  `gh pr create`, `gh pr merge`) needs explicit authorization for that specific
+  action.
+- Skip hooks (`--no-verify`) --- pre-commit runs `rustfmt` and `panache format`.
+  Fix the underlying issue if a hook fails.
+- Amend a published commit; create a new one.
+- (See "DON'T" above for `CHANGELOG.md` --- versionary owns it.)
 
 ## Logging Infrastructure
 
