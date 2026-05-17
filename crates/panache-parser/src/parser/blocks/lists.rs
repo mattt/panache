@@ -1094,6 +1094,15 @@ pub(in crate::parser) fn find_matching_list_level(
     let mut best_above_match: Option<(usize, usize)> = None; // (index, delta = base - indent), ordered deep only
 
     for (i, c) in containers.stack.iter().enumerate().rev() {
+        // BlockQuote acts as a list-continuation barrier. A list outside a
+        // BlockQuote can't be continued from inside the BlockQuote — opening
+        // a BlockQuote starts a new container "world". Without this stop,
+        // `- intro\n\n  > - 0:` matches the outer `-` list and closes the
+        // freshly-opened BlockQuote (issue #292). Pandoc-native treats the
+        // inner list as a child of the BlockQuote.
+        if matches!(c, Container::BlockQuote { .. }) {
+            break;
+        }
         if let Container::List {
             marker: list_marker,
             base_indent_cols,

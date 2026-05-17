@@ -437,6 +437,7 @@ golden_test_cases!(
     list_item_blank_line_inside,
     list_item_blank_then_refdef_commonmark,
     list_item_blockquote_internal_blank_commonmark,
+    list_item_blockquote_nested_list_issue_292,
     list_item_empty_marker_indented_code_next_line,
     list_item_empty_marker_setext_blocked_commonmark,
     list_item_fenced_code_first_line_commonmark,
