@@ -126,6 +126,99 @@ impl ContainerPrefix {
     }
 }
 
+/// Lazy stripped view over `&self.lines[base..]`. The dispatcher builds
+/// one of these per block dispatch from a [`ContainerPrefix`] and the
+/// raw line buffer, then hands it to block parsers in place of the
+/// historical `(ctx.content, &[&str], line_pos)` triple.
+///
+/// Strips are computed on access (no allocation): the returned `&'a str`
+/// is always a sub-slice of one of `raw`'s entries, so the lifetime
+/// matches the underlying source.
+///
+/// Three accessors, with deliberately different strip semantics:
+///
+/// * [`Self::first`] — emission-safe line-0 strip via
+///   [`ContainerPrefix::strip_line_0_for_emission`]. Matches the byte
+///   boundary of the legacy `BlockContext::content` exactly.
+/// * [`Self::get`] — line `i` from `base`; emission-safe for `i == 0`,
+///   unconditional [`ContainerPrefix::strip`] for `i > 0`. Mirrors what
+///   parsers used to hand-roll with `prefix.strip(lines[line_pos + i])`.
+/// * [`Self::first_unconditional`] — detection-time strip of line 0
+///   that always advances past `list_content_col`, regardless of
+///   `list_marker_consumed_on_line_0`. Used by parsers that scan for
+///   shape (e.g. fenced-code open) where the indent must be skipped on
+///   both marker and continuation lines.
+///
+/// Raw access via [`Self::raw`] / [`Self::raw_at`] is preserved for
+/// helpers that need byte positions inside the original source (table
+/// scans, indent-rule probes, byte-level lookahead).
+pub(crate) struct StrippedLines<'a, 'p> {
+    raw: &'a [&'a str],
+    base: usize,
+    prefix: &'p ContainerPrefix,
+}
+
+#[allow(dead_code)]
+impl<'a, 'p> StrippedLines<'a, 'p> {
+    pub fn new(raw: &'a [&'a str], base: usize, prefix: &'p ContainerPrefix) -> Self {
+        Self { raw, base, prefix }
+    }
+
+    /// Line 0 with emission-safe strip semantics (matches the legacy
+    /// `ctx.content` byte boundary).
+    pub fn first(&self) -> &'a str {
+        self.prefix.strip_line_0_for_emission(self.raw[self.base])
+    }
+
+    /// Line `i` relative to `base`. Uses
+    /// [`ContainerPrefix::strip_line_0_for_emission`] when `i == 0` and
+    /// [`ContainerPrefix::strip`] otherwise — matching the behaviour
+    /// of parsers that previously hand-rolled this split.
+    #[allow(dead_code)]
+    pub fn get(&self, i: usize) -> &'a str {
+        let line = self.raw[self.base + i];
+        if i == 0 {
+            self.prefix.strip_line_0_for_emission(line)
+        } else {
+            self.prefix.strip(line)
+        }
+    }
+
+    /// Detection-mode line-0 strip — always advances past
+    /// `list_content_col`. Used when scanning for block shapes (fences,
+    /// HRs) where the indent must be skipped regardless of whether the
+    /// marker was upstream-emitted.
+    #[allow(dead_code)]
+    pub fn first_unconditional(&self) -> &'a str {
+        self.prefix.strip(self.raw[self.base])
+    }
+
+    /// Raw line buffer (full slice — index with `raw()[base + i]` or
+    /// use [`Self::raw_at`]).
+    #[allow(dead_code)]
+    pub fn raw(&self) -> &'a [&'a str] {
+        self.raw
+    }
+
+    /// Raw line at offset `i` from `base`, with no stripping.
+    #[allow(dead_code)]
+    pub fn raw_at(&self, i: usize) -> &'a str {
+        self.raw[self.base + i]
+    }
+
+    /// Base offset into `raw` — equal to the legacy `line_pos`.
+    #[allow(dead_code)]
+    pub fn pos(&self) -> usize {
+        self.base
+    }
+
+    /// Underlying [`ContainerPrefix`].
+    #[allow(dead_code)]
+    pub fn prefix(&self) -> &ContainerPrefix {
+        self.prefix
+    }
+}
+
 /// Advance past `target` columns of `line`. Tabs round up to the next
 /// 4-column stop; tab that would overshoot the target is left intact
 /// (mirrors `strip_list_item_indent`'s tab handling). Newlines / CR
@@ -302,6 +395,92 @@ mod tests {
         };
         assert_eq!(p.strip(""), "");
         assert_eq!(p.strip("\n"), "");
+    }
+
+    #[test]
+    fn stripped_lines_first_matches_strip_line_0_for_emission() {
+        let prefix = ContainerPrefix {
+            list_content_col: 2,
+            bq_depth: 1,
+            list_marker_consumed_on_line_0: true,
+        };
+        let raw = ["- > <div>", "  > foo"];
+        let lines = StrippedLines::new(&raw, 0, &prefix);
+        assert_eq!(lines.first(), "<div>");
+        assert_eq!(lines.first(), prefix.strip_line_0_for_emission(raw[0]));
+    }
+
+    #[test]
+    fn stripped_lines_first_skips_list_col_only_when_marker_consumed() {
+        // bq_depth=0 isolates the list-col strip difference — the bq
+        // marker stripper otherwise consumes up to 3 leading spaces by
+        // itself, masking the divergence.
+        let prefix_continuation = ContainerPrefix {
+            list_content_col: 2,
+            bq_depth: 0,
+            list_marker_consumed_on_line_0: false,
+        };
+        let raw = ["  continuation"];
+        let lines = StrippedLines::new(&raw, 0, &prefix_continuation);
+        // marker_consumed=false → list-indent preserved on line 0.
+        assert_eq!(lines.first(), "  continuation");
+        // first_unconditional always advances past the list cols.
+        assert_eq!(lines.first_unconditional(), "continuation");
+
+        let prefix_marker = ContainerPrefix {
+            list_marker_consumed_on_line_0: true,
+            ..prefix_continuation
+        };
+        let lines = StrippedLines::new(&raw, 0, &prefix_marker);
+        // marker_consumed=true → list-indent skipped on line 0.
+        assert_eq!(lines.first(), "continuation");
+    }
+
+    #[test]
+    fn stripped_lines_get_uses_unconditional_strip_after_line_0() {
+        let prefix = ContainerPrefix {
+            list_content_col: 2,
+            bq_depth: 0,
+            list_marker_consumed_on_line_0: false,
+        };
+        let raw = ["  foo", "  bar", "  baz"];
+        let lines = StrippedLines::new(&raw, 0, &prefix);
+        // Line 0: emission-safe → list-indent preserved.
+        assert_eq!(lines.get(0), "  foo");
+        // Lines 1+: unconditional → list-indent stripped.
+        assert_eq!(lines.get(1), "bar");
+        assert_eq!(lines.get(2), "baz");
+    }
+
+    #[test]
+    fn stripped_lines_raw_access_is_unstripped() {
+        let prefix = ContainerPrefix {
+            list_content_col: 2,
+            bq_depth: 1,
+            list_marker_consumed_on_line_0: true,
+        };
+        let raw = ["- > foo", "  > bar"];
+        let lines = StrippedLines::new(&raw, 0, &prefix);
+        assert_eq!(lines.raw_at(0), "- > foo");
+        assert_eq!(lines.raw_at(1), "  > bar");
+        assert_eq!(lines.raw().len(), 2);
+        assert_eq!(lines.pos(), 0);
+    }
+
+    #[test]
+    fn stripped_lines_respects_base_offset() {
+        let prefix = ContainerPrefix {
+            list_content_col: 0,
+            bq_depth: 0,
+            list_marker_consumed_on_line_0: false,
+        };
+        let raw = ["pre", "first", "second"];
+        let lines = StrippedLines::new(&raw, 1, &prefix);
+        assert_eq!(lines.first(), "first");
+        assert_eq!(lines.get(0), "first");
+        assert_eq!(lines.get(1), "second");
+        assert_eq!(lines.pos(), 1);
+        assert_eq!(lines.raw_at(0), "first");
     }
 
     #[test]

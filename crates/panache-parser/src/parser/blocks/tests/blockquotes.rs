@@ -403,7 +403,10 @@ fn dispatcher_blockquote_detection() {
         list_marker_consumed_on_line_0: false,
     };
 
-    let result = registry.detect_prepared(&ctx, &[line], 0);
+    let prefix = crate::parser::blocks::container_prefix::ContainerPrefix::from_ctx(&ctx);
+    let raw = [line];
+    let stripped = crate::parser::blocks::container_prefix::StrippedLines::new(&raw, 0, &prefix);
+    let result = registry.detect_prepared(&ctx, &stripped);
     assert!(result.is_some(), "Dispatcher should detect blockquote");
     let result = result.unwrap();
     assert_eq!(
@@ -440,7 +443,10 @@ fn dispatcher_blockquote_requires_blank_before() {
         list_marker_consumed_on_line_0: false,
     };
 
-    let result = registry.detect_prepared(&ctx, &[line], 0);
+    let prefix = crate::parser::blocks::container_prefix::ContainerPrefix::from_ctx(&ctx);
+    let raw = [line];
+    let stripped = crate::parser::blocks::container_prefix::StrippedLines::new(&raw, 0, &prefix);
+    let result = registry.detect_prepared(&ctx, &stripped);
     assert!(
         result.is_some(),
         "Dispatcher should still detect blockquote"
@@ -483,7 +489,10 @@ fn dispatcher_blockquote_payload_basic() {
         list_marker_consumed_on_line_0: false,
     };
 
-    let result = registry.detect_prepared(&ctx, &[line], 0).unwrap();
+    let prefix = crate::parser::blocks::container_prefix::ContainerPrefix::from_ctx(&ctx);
+    let raw = [line];
+    let stripped = crate::parser::blocks::container_prefix::StrippedLines::new(&raw, 0, &prefix);
+    let result = registry.detect_prepared(&ctx, &stripped).unwrap();
     let payload = result
         .payload
         .as_ref()
@@ -523,7 +532,9 @@ fn dispatcher_blockquote_payload_nested_requires_blank() {
         list_marker_consumed_on_line_0: false,
     };
 
-    let result = registry.detect_prepared(&ctx, &lines, 1).unwrap();
+    let prefix = crate::parser::blocks::container_prefix::ContainerPrefix::from_ctx(&ctx);
+    let stripped = crate::parser::blocks::container_prefix::StrippedLines::new(&lines, 1, &prefix);
+    let result = registry.detect_prepared(&ctx, &stripped).unwrap();
     let payload = result
         .payload
         .as_ref()
@@ -562,7 +573,10 @@ fn dispatcher_blockquote_ignored_inside_blockquote() {
         list_marker_consumed_on_line_0: false,
     };
 
-    let result = registry.detect_prepared(&ctx, &[line], 0);
+    let prefix = crate::parser::blocks::container_prefix::ContainerPrefix::from_ctx(&ctx);
+    let raw = [line];
+    let stripped = crate::parser::blocks::container_prefix::StrippedLines::new(&raw, 0, &prefix);
+    let result = registry.detect_prepared(&ctx, &stripped);
     assert!(
         result.is_none(),
         "Dispatcher should ignore nested blockquote lines"
@@ -596,7 +610,9 @@ fn dispatcher_blockquote_payload_nested_with_blank() {
         list_marker_consumed_on_line_0: false,
     };
 
-    let result = registry.detect_prepared(&ctx, &lines, 2).unwrap();
+    let prefix = crate::parser::blocks::container_prefix::ContainerPrefix::from_ctx(&ctx);
+    let stripped = crate::parser::blocks::container_prefix::StrippedLines::new(&lines, 2, &prefix);
+    let result = registry.detect_prepared(&ctx, &stripped).unwrap();
     let payload = result
         .payload
         .as_ref()
@@ -635,7 +651,9 @@ fn dispatcher_blockquote_payload_nested_after_blank_line() {
         list_marker_consumed_on_line_0: false,
     };
 
-    let result = registry.detect_prepared(&ctx, &lines, 2).unwrap();
+    let prefix = crate::parser::blocks::container_prefix::ContainerPrefix::from_ctx(&ctx);
+    let stripped = crate::parser::blocks::container_prefix::StrippedLines::new(&lines, 2, &prefix);
+    let result = registry.detect_prepared(&ctx, &stripped).unwrap();
     let payload = result
         .payload
         .as_ref()

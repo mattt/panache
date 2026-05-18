@@ -465,6 +465,22 @@ intentionally excluded.
       pre-stripped lines view (or computing `first_inner` once at the
       dispatcher) would let helpers stop re-stripping and remove the
       `list_marker_consumed_on_line_0` line-0 special case.
+      - **Partial**: trait signature swapped to take
+        `lines: &StrippedLines<'_,     '_>`
+        (`parser/blocks/container_prefix.rs`). The raw `(&[&str], usize)` tuple
+        is gone from `detect_prepared` / `parse_prepared`; parser bodies still
+        access `lines.raw()` / `lines.pos()` via in-fn shims. A
+        `BlockPrefixInfo` struct landed (definition only --- no plumbing yet) to
+        host the eventual `count_blockquote_markers` /
+        `parse_blockquote_marker_info` cache.
+      - **Blocked**: migrating `ctx.content` references to `lines.first()` and
+        deleting `BlockContext.content` / `list_marker_consumed_on_line_0`
+        requires extending `ContainerPrefix` to absorb `content_indent` (the
+        footnote/definition base-indent strip done in `parse_inner_content`).
+        Without that, `lines.first()` ≠ `ctx.content` when `content_indent > 0`
+        (inside footnote/definition contexts), so a naive migration breaks
+        losslessness. Track as a follow-up architectural decision: extend the
+        prefix or keep `ctx.content` as a derived alias.
 - [ ] Audit other multi-line-lookahead block parsers for the same misfire class.
       Concrete finding from the `ContainerPrefix` audit: fenced code in
       list-item + bq breaks losslessness (CST text doesn't match input) for the
@@ -683,7 +699,7 @@ implemented.
 #### Raw HTML
 
 - [x] Extension: `raw_html` - Inline and block HTML
-- [ ] Extension: `markdown_in_html_blocks` - Markdown inside HTML blocks
+- [x] Extension: `markdown_in_html_blocks` - Markdown inside HTML blocks
 
 #### Raw LaTeX
 
@@ -746,7 +762,7 @@ for initial implementation.
 
 - [x] Extension behavior: lists can start without a preceding blank line
       (non-default compatibility behavior).
-- [ ] Add explicit extension-gated handling/config semantics for
+- [x] Add explicit extension-gated handling/config semantics for
       `lists_without_preceding_blankline`.
 - [x] Extension behavior: four-space list indentation rules are supported in
       compatibility mode.
@@ -804,41 +820,10 @@ for initial implementation.
 - [x] Formatter with normalized spacing
 - [x] Extension flag `quarto_shortcodes` (enabled for Quarto flavor)
 - [x] Golden test coverage
-- [ ] LSP diagnostics for malformed shortcodes
-- [ ] Completion for built-in shortcode names
+- [x] LSP diagnostics for malformed shortcodes
+- [x] Completion for built-in shortcode names
 
 ### Known Differences from Pandoc
-
-#### Reference Link Parsing
-
-**Status**: 🤔 **Deferred architectural decision**
-
-**Issue**: Our CST structure differs from Pandoc's AST for undefined reference
-links.
-
-**Current behavior**:
-
-- `[undefined]` (no definition exists) → Parsed as LINK node in CST
-- Pandoc behavior: `[undefined]` → Parsed as literal text `Str "[undefined]"`
-- **Formatting output is correct** (both produce `[undefined]`)
-
-**Impact**:
-
-- ✅ No impact on formatting (our primary use case)
-- ✅ No impact on LSP features (uses CST traversal)
-- ✅ No impact on linting (uses CST traversal)
-- ⚠️ CST structure differs from Pandoc's AST (only matters for library users
-  inspecting CST)
-
-**Possible solutions** (if needed):
-
-1. CST traversal during inline parsing to check if definition exists (O(n) cost
-   per reference)
-2. Minimal registry with `HashSet<String>` of definition labels (O(1) lookup)
-3. Two-pass parsing (parse blocks first, then inline with definition knowledge)
-
-**Decision**: Accept current behavior until a real-world use case requires
-matching Pandoc's AST structure exactly.
 
 #### Smart Abbreviation Non-Breaking Spaces
 

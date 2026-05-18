@@ -8,6 +8,7 @@ use crate::options::{PandocCompat, ParserOptions};
 
 use crate::parser::block_dispatcher::{BlockContext, BlockParserRegistry};
 use crate::parser::blocks::blockquotes::{count_blockquote_markers, strip_n_blockquote_markers};
+use crate::parser::blocks::container_prefix::{ContainerPrefix, StrippedLines};
 use crate::parser::blocks::{definition_lists, html_blocks, lists, raw_blocks};
 use crate::parser::utils::container_stack::{ContainerStack, leading_indent};
 use crate::parser::utils::helpers::is_blank_line;
@@ -339,14 +340,17 @@ impl<'a, 'cfg> ContinuationPolicy<'a, 'cfg> {
             && leading_indent(raw_content).0 <= 3
             && !stripped_content.starts_with(':')
         {
-            let is_next_definition = self
-                .block_registry
-                .detect_prepared(block_ctx, lines, pos)
-                .map(|match_result| {
-                    match_result.effect
-                        == crate::parser::block_dispatcher::BlockEffect::OpenDefinitionList
-                })
-                .unwrap_or(false);
+            let is_next_definition = {
+                let prefix = ContainerPrefix::from_ctx(block_ctx);
+                let stripped = StrippedLines::new(lines, pos, &prefix);
+                self.block_registry
+                    .detect_prepared(block_ctx, &stripped)
+                    .map(|match_result| {
+                        match_result.effect
+                            == crate::parser::block_dispatcher::BlockEffect::OpenDefinitionList
+                    })
+                    .unwrap_or(false)
+            };
             if is_next_definition {
                 return false;
             }
@@ -386,7 +390,9 @@ impl<'a, 'cfg> ContinuationPolicy<'a, 'cfg> {
             return false;
         }
 
-        if let Some(match_result) = self.block_registry.detect_prepared(block_ctx, lines, pos) {
+        let prefix = ContainerPrefix::from_ctx(block_ctx);
+        let stripped = StrippedLines::new(lines, pos, &prefix);
+        if let Some(match_result) = self.block_registry.detect_prepared(block_ctx, &stripped) {
             if match_result.effect == crate::parser::block_dispatcher::BlockEffect::OpenList
                 && !prev_line_blank
             {

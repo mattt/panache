@@ -8,6 +8,7 @@ use super::block_dispatcher::{
 };
 use super::blocks::blockquotes;
 use super::blocks::code_blocks;
+use super::blocks::container_prefix::{ContainerPrefix, StrippedLines};
 use super::blocks::definition_lists;
 use super::blocks::fenced_divs;
 use super::blocks::headings::{
@@ -1741,8 +1742,10 @@ impl<'a> Parser<'a> {
         };
 
         let blockquote_payload = if let Some(dispatcher_ctx) = dispatcher_ctx.as_ref() {
+            let prefix = ContainerPrefix::from_ctx(dispatcher_ctx);
+            let stripped = StrippedLines::new(&self.lines, self.pos, &prefix);
             self.block_registry
-                .detect_prepared(dispatcher_ctx, &self.lines, self.pos)
+                .detect_prepared(dispatcher_ctx, &stripped)
                 .and_then(|prepared| {
                     if matches!(prepared.effect, BlockEffect::OpenBlockQuote) {
                         blockquote_match = Some(prepared);
@@ -2046,12 +2049,13 @@ impl<'a> Parser<'a> {
             if let (Some(dispatcher_ctx), Some(prepared)) =
                 (dispatcher_ctx.as_ref(), blockquote_match.as_ref())
             {
+                let prefix = ContainerPrefix::from_ctx(dispatcher_ctx);
+                let stripped = StrippedLines::new(&self.lines, self.pos, &prefix);
                 let _ = self.block_registry.parse_prepared(
                     prepared,
                     dispatcher_ctx,
                     &mut self.builder,
-                    &self.lines,
-                    self.pos,
+                    &stripped,
                 );
                 for _ in 0..bq_depth {
                     self.containers.push(Container::BlockQuote {});
@@ -2935,9 +2939,12 @@ impl<'a> Parser<'a> {
 
         // Initial detection (before blank/doc-start are computed). Note: this can
         // match reference definitions, but footnotes are handled explicitly later.
-        let dispatcher_match =
+        let dispatcher_match = {
+            let prefix = ContainerPrefix::from_ctx(&dispatcher_ctx);
+            let stripped = StrippedLines::new(&self.lines, self.pos, &prefix);
             self.block_registry
-                .detect_prepared(&dispatcher_ctx, &self.lines, self.pos);
+                .detect_prepared(&dispatcher_ctx, &stripped)
+        };
 
         // Check for heading (needs blank line before, or at start of container)
         // Note: for fenced div nesting, the line immediately after a div opening fence
@@ -2984,8 +2991,10 @@ impl<'a> Parser<'a> {
         let dispatcher_match =
             if dispatcher_ctx.has_blank_before || dispatcher_ctx.at_document_start {
                 // Recompute now that blank/doc-start conditions are known.
+                let prefix = ContainerPrefix::from_ctx(&dispatcher_ctx);
+                let stripped = StrippedLines::new(&self.lines, self.pos, &prefix);
                 self.block_registry
-                    .detect_prepared(&dispatcher_ctx, &self.lines, self.pos)
+                    .detect_prepared(&dispatcher_ctx, &stripped)
             } else {
                 dispatcher_match
             };
@@ -3030,13 +3039,16 @@ impl<'a> Parser<'a> {
                     self.close_open_footnote_definition();
                 }
 
-                let lines_consumed = self.block_registry.parse_prepared(
-                    block_match,
-                    &dispatcher_ctx,
-                    &mut self.builder,
-                    &self.lines,
-                    self.pos,
-                );
+                let lines_consumed = {
+                    let prefix = ContainerPrefix::from_ctx(&dispatcher_ctx);
+                    let stripped = StrippedLines::new(&self.lines, self.pos, &prefix);
+                    self.block_registry.parse_prepared(
+                        block_match,
+                        &dispatcher_ctx,
+                        &mut self.builder,
+                        &stripped,
+                    )
+                };
 
                 if matches!(
                     self.block_registry.parser_name(block_match),
@@ -3248,13 +3260,16 @@ impl<'a> Parser<'a> {
                     self.close_open_footnote_definition();
                 }
 
-                let lines_consumed = self.block_registry.parse_prepared(
-                    block_match,
-                    &dispatcher_ctx,
-                    &mut self.builder,
-                    &self.lines,
-                    self.pos,
-                );
+                let lines_consumed = {
+                    let prefix = ContainerPrefix::from_ctx(&dispatcher_ctx);
+                    let stripped = StrippedLines::new(&self.lines, self.pos, &prefix);
+                    self.block_registry.parse_prepared(
+                        block_match,
+                        &dispatcher_ctx,
+                        &mut self.builder,
+                        &stripped,
+                    )
+                };
 
                 let extras = match block_match.effect {
                     BlockEffect::None => 0,
