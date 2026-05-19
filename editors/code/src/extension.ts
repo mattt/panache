@@ -264,6 +264,22 @@ async function startClient(
         },
       },
     },
+    middleware: {
+      provideDocumentSymbols: async (document, token, next) => {
+        const enabled = vscode.workspace
+          .getConfiguration("panache")
+          .get<boolean>("symbols.document.enable", true);
+        if (!enabled) return null;
+        return next(document, token);
+      },
+      provideWorkspaceSymbols: async (query, token, next) => {
+        const enabled = vscode.workspace
+          .getConfiguration("panache")
+          .get<boolean>("symbols.workspace.enable", true);
+        if (!enabled) return null;
+        return next(query, token);
+      },
+    },
   };
 
   client = new LanguageClient(

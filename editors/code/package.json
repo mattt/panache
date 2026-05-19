@@ -172,6 +172,16 @@
           "type": "boolean",
           "default": false,
           "description": "Enable experimental incremental parsing in the Panache language server. This may improve didChange performance but can be unstable."
+        },
+        "panache.symbols.document.enable": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Publish document symbols (the outline panel, breadcrumbs, and `Go to Symbol in File`) from the Panache language server. Set to `false` when another extension (such as Quarto) provides a preferred outline for the same documents."
+        },
+        "panache.symbols.workspace.enable": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Publish workspace symbols (`Go to Symbol in Workspace`) from the Panache language server. Set to `false` to defer to another extension that indexes the same documents."
         }
       }
     },

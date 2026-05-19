@@ -139,6 +139,14 @@ Panache registers itself as the default formatter for `[quarto]` and
 - `panache.trace.server`: LSP trace level (`off`, `messages`, `verbose`)
 - `panache.experimental.incrementalParsing`: enable experimental incremental
   parsing in LSP (default: `false`)
+- `panache.symbols.document.enable`: publish document symbols (the outline
+  panel, breadcrumbs, and `Go to Symbol in File`) from the Panache language
+  server (default: `true`). Set to `false` when another extension (such as
+  Quarto) provides a preferred outline for the same documents.
+- `panache.symbols.workspace.enable`: publish workspace symbols
+  (`Go to Symbol   in Workspace`) from the Panache language server (default:
+  `true`). Set to `false` to defer to another extension that indexes the same
+  documents.
 
 If external tools (for example `air` for R code chunks) work in your terminal
 but not inside the editor, set `panache.extraPath` to include their install
