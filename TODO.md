@@ -115,7 +115,7 @@ support.
 - [x] Workspace symbols
       - [x] General support for pandoc etc
       - [x] Quarto - project-wide symbol search for figures, tables, sections
-      - [ ] Rmarkdown (Bookdown)
+      - [x] Rmarkdown (Bookdown)
 - [ ] Configuration via LSP - `workspace/didChangeConfiguration` to reload
       config
 
@@ -135,7 +135,7 @@ support.
 
 #### Syntax correctness
 
-- [ ] Malformed fenced divs (unclosed, invalid attributes)
+- [x] Malformed fenced divs (unclosed, invalid attributes)
 - [ ] Broken table structures
 - [ ] Invalid citation syntax (`@citekey` malformations)
 - [ ] Unclosed inline math/code spans
