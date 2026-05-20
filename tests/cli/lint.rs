@@ -1006,3 +1006,62 @@ fn test_lint_dash_mixed_with_path_errors() {
             "'-' (stdin) cannot be combined with file path arguments",
         ));
 }
+
+#[test]
+fn test_lint_dot_config_exclude_anchors_at_project_root_off_cwd() {
+    // A `.config/panache.toml` exclude anchors at the project root even when
+    // the process cwd is elsewhere.
+    let project = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    fs::create_dir_all(project.path().join(".git")).unwrap();
+    fs::create_dir_all(project.path().join(".config")).unwrap();
+    fs::write(
+        project.path().join(".config").join("panache.toml"),
+        "exclude = [\"tests/\"]\n",
+    )
+    .unwrap();
+    fs::write(project.path().join("doc.qmd"), "# Heading\n\n## Sub\n").unwrap();
+    let excluded_dir = project.path().join("tests");
+    fs::create_dir_all(&excluded_dir).unwrap();
+    fs::write(
+        excluded_dir.join("snapshot.md"),
+        "# Heading\n\n### Skipped\n",
+    )
+    .unwrap();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(elsewhere.path())
+        .args(["lint", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No issues found in 1 file(s)"));
+}
+
+#[test]
+fn test_lint_explicit_config_exclude_anchors_at_config_dir() {
+    // `--config <dir>/panache.toml` excludes resolve relative to <dir>, not cwd.
+    let project = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let config = project.path().join("panache.toml");
+    fs::write(&config, "exclude = [\"tests/\"]\n").unwrap();
+    fs::write(project.path().join("doc.qmd"), "# Heading\n\n## Sub\n").unwrap();
+    let excluded_dir = project.path().join("tests");
+    fs::create_dir_all(&excluded_dir).unwrap();
+    fs::write(
+        excluded_dir.join("snapshot.md"),
+        "# Heading\n\n### Skipped\n",
+    )
+    .unwrap();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(elsewhere.path())
+        .args([
+            "lint",
+            "--config",
+            config.to_str().unwrap(),
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No issues found in 1 file(s)"));
+}

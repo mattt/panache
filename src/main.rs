@@ -181,26 +181,19 @@ fn relative_path_from_root(path: &Path, root: &Path) -> Option<PathBuf> {
 fn expand_paths(
     paths: &[PathBuf],
     cfg: &panache::Config,
-    filter_root: &Path,
+    anchor: &Path,
     force_exclude: bool,
     accept_any_extension: bool,
 ) -> io::Result<Vec<PathBuf>> {
     use ignore::WalkBuilder;
 
     let mut files = Vec::new();
+    // One matcher anchored at the config's directory (the unified rule).
+    let filters = build_path_filters(anchor, cfg)?;
 
     for path in paths {
-        let matcher_root = if relative_path_from_root(path, filter_root).is_some() {
-            filter_root
-        } else if path.is_dir() {
-            path.as_path()
-        } else {
-            path.parent().unwrap_or(filter_root)
-        };
-        let filters = build_path_filters(matcher_root, cfg)?;
-
         if path.is_file() {
-            let rel_path = relative_path_from_root(path, matcher_root)
+            let rel_path = relative_path_from_root(path, anchor)
                 .or_else(|| path.file_name().map(PathBuf::from))
                 .unwrap_or_else(|| path.to_path_buf());
             if force_exclude
@@ -239,7 +232,7 @@ fn expand_paths(
             for entry in walker {
                 let entry = entry.map_err(io::Error::other)?;
                 let entry_path = entry.path();
-                let rel_path = relative_path_from_root(entry_path, matcher_root)
+                let rel_path = relative_path_from_root(entry_path, anchor)
                     .unwrap_or_else(|| entry_path.to_path_buf());
                 if entry_path.is_dir() {
                     continue;
@@ -480,27 +473,6 @@ fn has_explicit_file_targets(paths: &[PathBuf]) -> bool {
     paths.iter().any(|path| !path.is_dir())
 }
 
-fn path_matching_root(
-    explicit_config: Option<&Path>,
-    discovered_config: Option<&Path>,
-    traversal_start_dir: &Path,
-) -> io::Result<PathBuf> {
-    let cwd = std::env::current_dir()?;
-
-    if explicit_config.is_some() {
-        return Ok(cwd);
-    }
-
-    if let Some(config_path) = discovered_config
-        && let Some(parent) = config_path.parent()
-        && relative_path_from_root(traversal_start_dir, parent).is_some()
-    {
-        return Ok(parent.to_path_buf());
-    }
-
-    Ok(cwd)
-}
-
 fn load_config_for_cli(
     config_path: Option<&Path>,
     isolated: bool,
@@ -508,11 +480,9 @@ fn load_config_for_cli(
     start_dir: &Path,
     input_path: Option<&Path>,
     flavor_override: Option<Flavor>,
-) -> io::Result<(panache::Config, Option<PathBuf>)> {
+) -> io::Result<(panache::Config, panache::config::ConfigSource)> {
     let mut loaded = if !isolated {
-        let (cfg, source) =
-            panache::config::load(config_path, start_dir, input_path, flavor_override)?;
-        (cfg, source.path().map(Path::to_path_buf))
+        panache::config::load(config_path, start_dir, input_path, flavor_override)?
     } else {
         let mut cfg = panache::Config::default();
         let isolated_flavor = flavor_override.or_else(|| {
@@ -531,7 +501,7 @@ fn load_config_for_cli(
             cfg.flavor = flavor;
             cfg.extensions = panache::config::Extensions::for_flavor(flavor);
         }
-        (cfg, None)
+        (cfg, panache::config::ConfigSource::None)
     };
 
     if let Some(cache_dir) = cli_cache_dir {
@@ -851,7 +821,7 @@ fn main() -> io::Result<()> {
             let file = normalize_parse_path(file);
             let input_path = file.as_deref().or(cli.stdin_filename.as_deref());
             let start_dir = start_dir_for(input_path)?;
-            let (cfg, cfg_path) = load_config_for_cli(
+            let (cfg, cfg_source) = load_config_for_cli(
                 cli.config.as_deref(),
                 cli.isolated,
                 cli.cache_dir.as_deref(),
@@ -860,7 +830,7 @@ fn main() -> io::Result<()> {
                 cli.flavor.map(Flavor::from),
             )?;
 
-            if let Some(path) = &cfg_path {
+            if let Some(path) = cfg_source.path() {
                 log::debug!("Using config from: {}", path.display());
             } else {
                 log::debug!("Using default config");
@@ -938,7 +908,7 @@ fn main() -> io::Result<()> {
             // Handle stdin case
             if files.is_empty() {
                 let start_dir = start_dir_for(cli.stdin_filename.as_deref())?;
-                let (mut cfg, cfg_path) = load_config_for_cli(
+                let (mut cfg, cfg_source) = load_config_for_cli(
                     cli.config.as_deref(),
                     cli.isolated,
                     cli.cache_dir.as_deref(),
@@ -951,7 +921,7 @@ fn main() -> io::Result<()> {
                     std::process::exit(2);
                 }
 
-                if let Some(path) = &cfg_path {
+                if let Some(path) = cfg_source.path() {
                     log::debug!("Using config from: {}", path.display());
                 } else {
                     log::debug!("Using default config");
@@ -1005,7 +975,7 @@ fn main() -> io::Result<()> {
             } else {
                 start_dir_for(None)?
             };
-            let (traversal_cfg, traversal_cfg_path) = load_config_for_cli(
+            let (traversal_cfg, traversal_cfg_source) = load_config_for_cli(
                 cli.config.as_deref(),
                 cli.isolated,
                 cli.cache_dir.as_deref(),
@@ -1013,15 +983,11 @@ fn main() -> io::Result<()> {
                 traversal_anchor,
                 cli.flavor.map(Flavor::from),
             )?;
-            let matching_root = path_matching_root(
-                cli.config.as_deref(),
-                traversal_cfg_path.as_deref(),
-                &traversal_start_dir,
-            )?;
+            let anchor = panache::config::anchor_dir(&traversal_cfg_source, &traversal_start_dir);
             let expanded_files = expand_paths(
                 &files,
                 &traversal_cfg,
-                &matching_root,
+                &anchor,
                 force_exclude,
                 cli.flavor.is_some(),
             )?;
@@ -1067,7 +1033,7 @@ fn main() -> io::Result<()> {
 
             let process_file = |file_path: &PathBuf| -> io::Result<FormatOutcome> {
                 let start_dir = file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-                let (mut cfg, cfg_path) = load_config_for_cli(
+                let (mut cfg, cfg_source) = load_config_for_cli(
                     cli.config.as_deref(),
                     cli.isolated,
                     cli.cache_dir.as_deref(),
@@ -1083,7 +1049,7 @@ fn main() -> io::Result<()> {
                     cfg.external_max_parallel = 1;
                 }
 
-                if let Some(path) = &cfg_path {
+                if let Some(path) = cfg_source.path() {
                     log::debug!("Using config from: {}", path.display());
                 } else {
                     log::debug!("Using default config");
@@ -1410,7 +1376,7 @@ fn main() -> io::Result<()> {
                     } else {
                         start_dir_for(None)?
                     };
-                    let (traversal_cfg, traversal_cfg_path) = load_config_for_cli(
+                    let (traversal_cfg, traversal_cfg_source) = load_config_for_cli(
                         cli.config.as_deref(),
                         cli.isolated,
                         cli.cache_dir.as_deref(),
@@ -1418,15 +1384,12 @@ fn main() -> io::Result<()> {
                         traversal_anchor,
                         cli.flavor.map(Flavor::from),
                     )?;
-                    let matching_root = path_matching_root(
-                        cli.config.as_deref(),
-                        traversal_cfg_path.as_deref(),
-                        &traversal_start_dir,
-                    )?;
+                    let anchor =
+                        panache::config::anchor_dir(&traversal_cfg_source, &traversal_start_dir);
                     expand_paths(
                         &files,
                         &traversal_cfg,
-                        &matching_root,
+                        &anchor,
                         force_exclude,
                         cli.flavor.is_some(),
                     )?
@@ -1601,7 +1564,7 @@ fn main() -> io::Result<()> {
             // Handle stdin case
             if files.is_empty() {
                 let start_dir = start_dir_for(cli.stdin_filename.as_deref())?;
-                let (cfg, cfg_path) = load_config_for_cli(
+                let (cfg, cfg_source) = load_config_for_cli(
                     cli.config.as_deref(),
                     cli.isolated,
                     cli.cache_dir.as_deref(),
@@ -1610,7 +1573,7 @@ fn main() -> io::Result<()> {
                     cli.flavor.map(Flavor::from),
                 )?;
 
-                if let Some(path) = &cfg_path {
+                if let Some(path) = cfg_source.path() {
                     log::debug!("Using config from: {}", path.display());
                 } else {
                     log::debug!("Using default config");
@@ -1682,7 +1645,7 @@ fn main() -> io::Result<()> {
             } else {
                 start_dir_for(None)?
             };
-            let (traversal_cfg, traversal_cfg_path) = load_config_for_cli(
+            let (traversal_cfg, traversal_cfg_source) = load_config_for_cli(
                 cli.config.as_deref(),
                 cli.isolated,
                 cli.cache_dir.as_deref(),
@@ -1690,15 +1653,11 @@ fn main() -> io::Result<()> {
                 traversal_anchor,
                 cli.flavor.map(Flavor::from),
             )?;
-            let matching_root = path_matching_root(
-                cli.config.as_deref(),
-                traversal_cfg_path.as_deref(),
-                &traversal_start_dir,
-            )?;
+            let anchor = panache::config::anchor_dir(&traversal_cfg_source, &traversal_start_dir);
             let expanded_files = expand_paths(
                 &files,
                 &traversal_cfg,
-                &matching_root,
+                &anchor,
                 force_exclude,
                 cli.flavor.is_some(),
             )?;
@@ -1740,7 +1699,7 @@ fn main() -> io::Result<()> {
 
             let process_file = |file_path: &PathBuf| -> io::Result<LintOutcome> {
                 let start_dir = file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-                let (mut cfg, cfg_path) = load_config_for_cli(
+                let (mut cfg, cfg_source) = load_config_for_cli(
                     cli.config.as_deref(),
                     cli.isolated,
                     cli.cache_dir.as_deref(),
@@ -1752,7 +1711,7 @@ fn main() -> io::Result<()> {
                     cfg.external_max_parallel = 1;
                 }
 
-                if let Some(path) = &cfg_path {
+                if let Some(path) = cfg_source.path() {
                     log::debug!("Using config from: {}", path.display());
                 } else {
                     log::debug!("Using default config");

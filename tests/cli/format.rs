@@ -886,3 +886,124 @@ fn test_format_option_repeatable() {
         "wrap=preserve should still preserve breaks even with line-width=40, got:\n{stdout}"
     );
 }
+
+#[test]
+fn test_format_dot_config_exclude_anchors_at_project_root_off_cwd() {
+    // A `.config/panache.toml` exclude anchors at the project root (the dir
+    // above `.config/`) even when the process cwd is elsewhere — the anchor
+    // follows the config, not the cwd.
+    let project = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    fs::create_dir_all(project.path().join(".git")).unwrap();
+    fs::create_dir_all(project.path().join(".config")).unwrap();
+    fs::write(
+        project.path().join(".config").join("panache.toml"),
+        "exclude = [\"tests/\"]\n",
+    )
+    .unwrap();
+    fs::write(project.path().join("doc.qmd"), "# Included\n\nParagraph.\n").unwrap();
+    let excluded_dir = project.path().join("tests");
+    fs::create_dir_all(&excluded_dir).unwrap();
+    fs::write(
+        excluded_dir.join("snapshot.md"),
+        "# Excluded\n\nParagraph.\n",
+    )
+    .unwrap();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(elsewhere.path())
+        .args(["format", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 file left unchanged"))
+        .stdout(predicate::str::contains("snapshot.md").not());
+}
+
+#[test]
+fn test_format_explicit_config_exclude_anchors_at_config_dir() {
+    // `--config <dir>/panache.toml` excludes resolve relative to <dir>, not the
+    // process cwd (today's behavior would anchor at cwd).
+    let project = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let config = project.path().join("panache.toml");
+    fs::write(&config, "exclude = [\"tests/\"]\n").unwrap();
+    fs::write(project.path().join("doc.qmd"), "# Included\n\nParagraph.\n").unwrap();
+    let excluded_dir = project.path().join("tests");
+    fs::create_dir_all(&excluded_dir).unwrap();
+    fs::write(
+        excluded_dir.join("snapshot.md"),
+        "# Excluded\n\nParagraph.\n",
+    )
+    .unwrap();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(elsewhere.path())
+        .args([
+            "format",
+            "--config",
+            config.to_str().unwrap(),
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 file left unchanged"))
+        .stdout(predicate::str::contains("snapshot.md").not());
+}
+
+#[test]
+fn test_format_subdir_target_anchors_at_discovered_config_off_cwd() {
+    // Targeting a subdirectory from an unrelated cwd still anchors include
+    // globs at the discovered config's dir (the project root), so dropping the
+    // old cwd fallback does not regress subdir runs.
+    let project = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    fs::create_dir_all(project.path().join(".git")).unwrap();
+    let docs = project.path().join("docs");
+    let nested = docs.join("guides");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(
+        project.path().join("panache.toml"),
+        "include = [\"docs/**/*.qmd\"]\n",
+    )
+    .unwrap();
+    fs::write(docs.join("index.qmd"), "# Root\n\nParagraph.\n").unwrap();
+    fs::write(nested.join("intro.qmd"), "# Nested\n\nParagraph.\n").unwrap();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(elsewhere.path())
+        .args(["format", "--check", docs.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "All 2 files are correctly formatted",
+        ));
+}
+
+#[test]
+fn test_format_global_xdg_config_exclude_anchors_at_traversal_dir() {
+    // The global XDG config has no project location, so its exclude globs
+    // resolve relative to the directory being traversed.
+    let project = TempDir::new().unwrap();
+    let xdg = TempDir::new().unwrap();
+    fs::create_dir_all(project.path().join(".git")).unwrap();
+    let xdg_panache = xdg.path().join("panache");
+    fs::create_dir_all(&xdg_panache).unwrap();
+    fs::write(xdg_panache.join("config.toml"), "exclude = [\"tests/\"]\n").unwrap();
+    fs::write(project.path().join("doc.qmd"), "# Included\n\nParagraph.\n").unwrap();
+    let excluded_dir = project.path().join("tests");
+    fs::create_dir_all(&excluded_dir).unwrap();
+    fs::write(
+        excluded_dir.join("snapshot.md"),
+        "# Excluded\n\nParagraph.\n",
+    )
+    .unwrap();
+
+    cargo_bin_cmd!("panache")
+        .current_dir(project.path())
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .args(["format", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 file left unchanged"))
+        .stdout(predicate::str::contains("snapshot.md").not());
+}
