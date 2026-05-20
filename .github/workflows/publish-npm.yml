@@ -30,10 +30,12 @@ jobs:
             os: ubuntu-latest
             npm_name: linux-x64-gnu
             binary: panache
+            glibc: "2.17"
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             npm_name: linux-arm64-gnu
             binary: panache
+            glibc: "2.17"
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             npm_name: linux-x64-musl
@@ -80,8 +82,42 @@ jobs:
         if: matrix.musl
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
+      # Pin the glibc symbol-version floor (link-time only; the binary still
+      # uses the host's glibc at runtime) so it runs on distros older than the
+      # CI runner. See #300.
+      - name: Install Zig
+        if: matrix.glibc
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-zigbuild
+        if: matrix.glibc
+        run: cargo install --locked cargo-zigbuild
+
+      - name: Build binary (zigbuild)
+        if: matrix.glibc
+        run: cargo zigbuild --release --bin panache --target ${{ matrix.target }}.${{ matrix.glibc }} --locked
+
       - name: Build binary
+        if: ${{ !matrix.glibc }}
         run: cargo build --release --bin panache --target ${{ matrix.target }} --locked
+
+      # Regression guard for #300: fail if the binary ever requires a glibc
+      # newer than the declared floor.
+      - name: Verify glibc floor
+        if: matrix.glibc
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          max=$(objdump -T "$bin" 2>/dev/null \
+            | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' \
+            | sed 's/GLIBC_//' | sort -V | tail -n1 || true)
+          echo "Highest required glibc symbol: ${max:-none}"
+          if [ -n "$max" ] && [ "$(printf '%s\n%s\n' "$max" "${{ matrix.glibc }}" | sort -V | tail -n1)" != "${{ matrix.glibc }}" ]; then
+            echo "::error::panache requires glibc $max, above the ${{ matrix.glibc }} floor"
+            exit 1
+          fi
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
