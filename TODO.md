@@ -284,8 +284,6 @@ intentionally excluded.
 - [ ] `htmlbeautifier`
 - [x] `hurlfmt`
 - [ ] `imba_fmt`
-- [ ] `indent`
-- [ ] `injected`
 - [ ] `inko`
 - [x] `isort`
 - [ ] `janet-format`
