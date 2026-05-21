@@ -3,8 +3,9 @@ use crate::syntax::SyntaxKind;
 use rowan::GreenNodeBuilder;
 
 use super::blockquotes::strip_n_blockquote_markers;
-use super::code_blocks::{emit_content_line_prefixes, strip_list_indent};
-use super::container_prefix::advance_columns;
+use super::container_prefix::{
+    StrippedLines, advance_columns, bq_outer_of_list, strip_list_indent,
+};
 use crate::parser::utils::container_stack::byte_index_at_column;
 use crate::parser::utils::helpers::strip_newline;
 use crate::parser::utils::inline_emission;
@@ -23,26 +24,32 @@ pub fn try_parse_line_block_start(line: &str) -> Option<()> {
 /// Parse a complete line block starting at current position.
 /// Returns the new position after the line block.
 ///
-/// Container-prefix parameters mirror the fenced-code threading pattern
-/// (`parse_fenced_code_block` in `code_blocks.rs`). On the dispatch line
-/// (`pos == start_pos`), `list_marker_consumed_on_line_0` selects between a
-/// silent column-advance through the upstream-emitted list marker
-/// (`advance_columns`) and a whitespace-only strip with WHITESPACE emission
-/// (`strip_list_indent`). On subsequent lines, the list-content-indent is
-/// always whitespace and is stripped via `strip_list_indent` so that blank
-/// lines aren't eaten by the column-advance.
-#[allow(clippy::too_many_arguments)]
-pub fn parse_line_block(
-    lines: &[&str],
-    start_pos: usize,
+/// The container geometry is carried by the `StrippedLines` window: the
+/// dispatch line (`window.pos()`) keeps its bespoke `emit_open_line_prefixes`
+/// emitter — `list_marker_consumed_on_line_0` selects between a silent
+/// column-advance through the upstream-emitted list marker (`advance_columns`)
+/// and a whitespace-only strip with WHITESPACE emission (`strip_list_indent`).
+/// Continuation lines route through the window's `strip_at` (peek) and
+/// `emit_prefix_at` (re-emit prefix tokens), so the list-content-indent is
+/// always whitespace and blank lines aren't eaten by the column-advance.
+pub(crate) fn parse_line_block(
+    window: &StrippedLines<'_, '_>,
     builder: &mut GreenNodeBuilder<'static>,
     config: &ParserOptions,
-    bq_depth: usize,
-    list_content_col: usize,
-    list_marker_consumed_on_line_0: bool,
-    bq_outer: bool,
-    content_indent: usize,
 ) -> usize {
+    let lines = window.raw();
+    let start_pos = window.pos();
+    // The 5-scalar container geometry is derived once from the window's
+    // prefix; the dispatch-line emitter (`emit_open_line_prefixes`) still
+    // consumes the scalars, while continuation lines route through the
+    // window's `strip_at` / `emit_prefix_at`.
+    let prefix = window.prefix();
+    let bq_depth = prefix.bq_depth();
+    let list_content_col = prefix.list_content_col();
+    let list_marker_consumed_on_line_0 = prefix.list_marker_consumed_on_line_0;
+    let bq_outer = bq_outer_of_list(prefix);
+    let content_indent = prefix.content_indent();
+
     log::trace!("Parsing line block at line {}", start_pos + 1);
 
     builder.start_node(SyntaxKind::LINE_BLOCK.into());
@@ -58,13 +65,7 @@ pub fn parse_line_block(
             // line 0 is a marker line; commit without a peek.
             LineKind::Marker
         } else {
-            let peek = silent_strip_container_prefix(
-                raw_line,
-                bq_depth,
-                list_content_col,
-                bq_outer,
-                content_indent,
-            );
+            let peek = window.strip_at(pos);
             if parse_line_block_line_marker(peek).is_some() {
                 LineKind::Marker
             } else if peek.starts_with(' ') && !peek.trim_start().starts_with("| ") {
@@ -91,14 +92,7 @@ pub fn parse_line_block(
                 content_indent,
             )
         } else {
-            emit_content_line_prefixes(
-                builder,
-                raw_line,
-                bq_depth,
-                list_content_col,
-                bq_outer,
-                content_indent,
-            )
+            window.emit_prefix_at(builder, pos)
         };
 
         match kind {
@@ -144,43 +138,6 @@ pub fn parse_line_block(
 enum LineKind {
     Marker,
     Continuation,
-}
-
-/// Silent peek of the container-prefix strip for continuation/next-marker
-/// detection on lines 1..N. Mirrors the order-of-strip in
-/// `emit_content_line_prefixes` (`code_blocks.rs`) but writes no tokens.
-fn silent_strip_container_prefix<'a>(
-    line: &'a str,
-    bq_depth: usize,
-    list_content_col: usize,
-    bq_outer: bool,
-    content_indent: usize,
-) -> &'a str {
-    let mut s = line;
-    let strip_bq = |s: &mut &'a str| {
-        if bq_depth > 0 {
-            *s = strip_n_blockquote_markers(s, bq_depth);
-        }
-    };
-    let strip_list = |s: &mut &'a str| {
-        if list_content_col > 0 {
-            *s = strip_list_indent(s, list_content_col);
-        }
-    };
-    if bq_outer {
-        strip_bq(&mut s);
-        strip_list(&mut s);
-    } else {
-        strip_list(&mut s);
-        strip_bq(&mut s);
-    }
-    if content_indent > 0 {
-        let indent_bytes = byte_index_at_column(s, content_indent);
-        if s.len() >= indent_bytes {
-            s = &s[indent_bytes..];
-        }
-    }
-    s
 }
 
 /// Strip and emit the active container prefix on the dispatch line (line 0).
@@ -286,6 +243,7 @@ fn parse_line_block_line_marker(line: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::container_prefix::ContainerPrefix;
     use super::*;
 
     #[test]
@@ -318,17 +276,9 @@ mod tests {
         let input = vec!["| Line one", "| Line two", "| Line three"];
 
         let mut builder = GreenNodeBuilder::new();
-        let new_pos = parse_line_block(
-            &input,
-            0,
-            &mut builder,
-            &ParserOptions::default(),
-            0,
-            0,
-            false,
-            false,
-            0,
-        );
+        let prefix = ContainerPrefix::default();
+        let window = StrippedLines::new(&input, 0, &prefix);
+        let new_pos = parse_line_block(&window, &mut builder, &ParserOptions::default());
 
         assert_eq!(new_pos, 3);
     }
@@ -342,17 +292,9 @@ mod tests {
         ];
 
         let mut builder = GreenNodeBuilder::new();
-        let new_pos = parse_line_block(
-            &input,
-            0,
-            &mut builder,
-            &ParserOptions::default(),
-            0,
-            0,
-            false,
-            false,
-            0,
-        );
+        let prefix = ContainerPrefix::default();
+        let window = StrippedLines::new(&input, 0, &prefix);
+        let new_pos = parse_line_block(&window, &mut builder, &ParserOptions::default());
 
         assert_eq!(new_pos, 3);
     }
@@ -362,17 +304,9 @@ mod tests {
         let input = vec!["| First line", "|    Indented line", "| Back to normal"];
 
         let mut builder = GreenNodeBuilder::new();
-        let new_pos = parse_line_block(
-            &input,
-            0,
-            &mut builder,
-            &ParserOptions::default(),
-            0,
-            0,
-            false,
-            false,
-            0,
-        );
+        let prefix = ContainerPrefix::default();
+        let window = StrippedLines::new(&input, 0, &prefix);
+        let new_pos = parse_line_block(&window, &mut builder, &ParserOptions::default());
 
         assert_eq!(new_pos, 3);
     }
@@ -382,17 +316,9 @@ mod tests {
         let input = vec!["| Line one", "| Line two", "Regular paragraph"];
 
         let mut builder = GreenNodeBuilder::new();
-        let new_pos = parse_line_block(
-            &input,
-            0,
-            &mut builder,
-            &ParserOptions::default(),
-            0,
-            0,
-            false,
-            false,
-            0,
-        );
+        let prefix = ContainerPrefix::default();
+        let window = StrippedLines::new(&input, 0, &prefix);
+        let new_pos = parse_line_block(&window, &mut builder, &ParserOptions::default());
 
         assert_eq!(new_pos, 2); // Should stop before "Regular paragraph"
     }

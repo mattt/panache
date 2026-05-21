@@ -1252,8 +1252,12 @@ impl BlockParser for TableParser {
             }
 
             if ctx.config.extensions.pipe_tables
-                && try_parse_pipe_table(lines, table_pos, &mut tmp, ctx.config, prefix, line_pos)
-                    .is_some()
+                && try_parse_pipe_table(
+                    &StrippedLines::with_dispatch(lines, table_pos, line_pos, prefix),
+                    &mut tmp,
+                    ctx.config,
+                )
+                .is_some()
             {
                 return Some((
                     detection,
@@ -1300,8 +1304,12 @@ impl BlockParser for TableParser {
         }
 
         if ctx.config.extensions.pipe_tables
-            && try_parse_pipe_table(lines, line_pos, &mut tmp, ctx.config, prefix, line_pos)
-                .is_some()
+            && try_parse_pipe_table(
+                &StrippedLines::with_dispatch(lines, line_pos, line_pos, prefix),
+                &mut tmp,
+                ctx.config,
+            )
+            .is_some()
         {
             return Some((
                 BlockDetectionResult::Yes,
@@ -1375,7 +1383,11 @@ impl BlockParser for TableParser {
                 }
                 TableKind::Pipe => {
                     if ctx.config.extensions.pipe_tables {
-                        try_parse_pipe_table(lines, pos, builder, ctx.config, prefix, line_pos)
+                        try_parse_pipe_table(
+                            &StrippedLines::with_dispatch(lines, pos, line_pos, prefix),
+                            builder,
+                            ctx.config,
+                        )
                     } else {
                         None
                     }
@@ -2216,24 +2228,11 @@ impl BlockParser for LineBlockParser {
         lines: &StrippedLines<'_, '_>,
         _payload: Option<&dyn Any>,
     ) -> usize {
-        let list_marker_consumed_on_line_0 = lines.prefix().list_marker_consumed_on_line_0;
-        let bq_outer = bq_outer_of_list(lines.prefix());
-        let list_content_col = ctx.list_indent_info.map(|i| i.content_col).unwrap_or(0);
-        let bq_depth = ctx.blockquote_depth;
-        let content_indent = ctx.content_indent;
+        // The window already carries the container prefix (geometry +
+        // `list_marker_consumed_on_line_0`); `parse_line_block` derives the
+        // 5-scalar geometry from it directly.
         let line_pos = lines.pos();
-        let lines = lines.raw();
-        let new_pos = parse_line_block(
-            lines,
-            line_pos,
-            builder,
-            ctx.config,
-            bq_depth,
-            list_content_col,
-            list_marker_consumed_on_line_0,
-            bq_outer,
-            content_indent,
-        );
+        let new_pos = parse_line_block(lines, builder, ctx.config);
         new_pos - line_pos
     }
 

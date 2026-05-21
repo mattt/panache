@@ -5,36 +5,16 @@ use crate::syntax::SyntaxKind;
 use rowan::GreenNodeBuilder;
 
 use super::blockquotes::{count_blockquote_markers, strip_n_blockquote_markers};
-use super::container_prefix::{ContainerPrefix, StripOp, advance_columns};
+use super::container_prefix::advance_columns;
 use crate::parser::utils::container_stack::byte_index_at_column;
 
-/// Strip up to `list_content_col` columns of leading whitespace,
-/// stopping at the first non-whitespace byte (newlines stop the scan
-/// rather than being consumed — important on blank lines inside a
-/// fenced code block). Mirrors the legacy
-/// `byte_index_at_column`-based strip used by the formatter.
-pub(crate) fn strip_list_indent(line: &str, list_content_col: usize) -> &str {
-    if list_content_col == 0 {
-        return line;
-    }
-    let idx = byte_index_at_column(line, list_content_col);
-    &line[idx..]
-}
-
-/// Returns `true` iff the outermost active container in `prefix` is a
-/// blockquote (i.e. `prefix.ops()` starts with `BlockQuoteMarker`
-/// before any `ListAdvance`). Used to pick the bq-vs-list strip order
-/// on content/lookahead lines.
-pub(crate) fn bq_outer_of_list(prefix: &ContainerPrefix) -> bool {
-    for op in prefix.ops() {
-        match op {
-            StripOp::BlockQuoteMarker => return true,
-            StripOp::ListAdvance(_) => return false,
-            StripOp::ContentIndent(_) => {}
-        }
-    }
-    false
-}
+// Container-prefix primitives live in `container_prefix.rs` (the lower
+// layer that hosts `StrippedLines`); re-export so existing call sites in
+// this module, `tables.rs`, `line_blocks.rs`, and `block_dispatcher.rs`
+// keep their `code_blocks::…` import paths working.
+pub(crate) use super::container_prefix::{
+    bq_outer_of_list, emit_blockquote_prefix_tokens, emit_content_line_prefixes, strip_list_indent,
+};
 
 use crate::parser::utils::helpers::{
     strip_leading_spaces, strip_newline, trim_end_spaces_tabs, trim_start_spaces_tabs,
@@ -637,107 +617,6 @@ fn prepare_fence_open_line<'a>(
         builder.token(SyntaxKind::WHITESPACE.into(), &s[..leading_ws_len]);
     }
     (first_trimmed, s)
-}
-
-pub(crate) fn emit_blockquote_prefix_tokens(builder: &mut GreenNodeBuilder<'static>, prefix: &str) {
-    for ch in prefix.chars() {
-        if ch == '>' {
-            builder.token(SyntaxKind::BLOCK_QUOTE_MARKER.into(), ">");
-        } else {
-            let mut buf = [0u8; 4];
-            builder.token(SyntaxKind::WHITESPACE.into(), ch.encode_utf8(&mut buf));
-        }
-    }
-}
-
-pub(crate) fn emit_content_line_prefixes<'a>(
-    builder: &mut GreenNodeBuilder<'static>,
-    content_line: &'a str,
-    bq_depth: usize,
-    list_content_col: usize,
-    bq_outer: bool,
-    content_indent: usize,
-) -> &'a str {
-    // Strip and emit content-line (1+) prefixes in container-stack
-    // order:
-    //   bq_outer=true  → bq markers → list_content_col → content_indent
-    //   bq_outer=false → list_content_col → bq markers → content_indent
-    // Bq markers emit granular tokens (BLOCK_QUOTE_MARKER + WHITESPACE);
-    // list_content_col and content_indent emit WHITESPACE. Adjacent
-    // WHITESPACE emissions are coalesced into one token for
-    // byte-range-equivalent CST stability.
-    let mut s = content_line;
-    let mut pending_ws_start: Option<usize> = None;
-
-    let flush_ws = |builder: &mut GreenNodeBuilder<'static>,
-                    pending: &mut Option<usize>,
-                    current_offset: usize| {
-        if let Some(start) = *pending
-            && current_offset > start
-        {
-            builder.token(
-                SyntaxKind::WHITESPACE.into(),
-                &content_line[start..current_offset],
-            );
-            *pending = None;
-        }
-    };
-
-    let strip_and_remember_list =
-        |s: &mut &'a str, pending: &mut Option<usize>, list_content_col: usize| {
-            if list_content_col == 0 {
-                return;
-            }
-            let stripped = strip_list_indent(s, list_content_col);
-            let consumed = s.len() - stripped.len();
-            if consumed > 0 {
-                let start = content_line.len() - s.len();
-                if pending.is_none() {
-                    *pending = Some(start);
-                }
-                *s = stripped;
-            }
-        };
-
-    let strip_and_emit_bq = |builder: &mut GreenNodeBuilder<'static>,
-                             s: &mut &'a str,
-                             pending: &mut Option<usize>,
-                             bq_depth: usize| {
-        if bq_depth == 0 {
-            return;
-        }
-        let current_offset = content_line.len() - s.len();
-        flush_ws(builder, pending, current_offset);
-        let stripped = strip_n_blockquote_markers(s, bq_depth);
-        let prefix_len = s.len() - stripped.len();
-        if prefix_len > 0 {
-            emit_blockquote_prefix_tokens(builder, &s[..prefix_len]);
-        }
-        *s = stripped;
-    };
-
-    if bq_outer {
-        strip_and_emit_bq(builder, &mut s, &mut pending_ws_start, bq_depth);
-        strip_and_remember_list(&mut s, &mut pending_ws_start, list_content_col);
-    } else {
-        strip_and_remember_list(&mut s, &mut pending_ws_start, list_content_col);
-        strip_and_emit_bq(builder, &mut s, &mut pending_ws_start, bq_depth);
-    }
-
-    if content_indent > 0 {
-        let indent_bytes = byte_index_at_column(s, content_indent);
-        if s.len() >= indent_bytes && indent_bytes > 0 {
-            let start = content_line.len() - s.len();
-            if pending_ws_start.is_none() {
-                pending_ws_start = Some(start);
-            }
-            s = &s[indent_bytes..];
-        }
-    }
-
-    let final_offset = content_line.len() - s.len();
-    flush_ws(builder, &mut pending_ws_start, final_offset);
-    s
 }
 
 fn strip_content_line_prefixes(

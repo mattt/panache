@@ -556,24 +556,41 @@ intentionally excluded.
         nested case is still imperfect because the BLOCK_QUOTE walker doesn't
         re-emit `>` for continuation lines under a LIST_ITEM --- pre-existing,
         unrelated to this fix; no test exercises that round-trip.)
-      - **Follow-up (deferred, standalone task)**: extract the per-line
-        container-stripping pattern into a shared `StrippedLineWindow` (or
-        similar) that any forward-scanning block parser can iterate. With all
-        four findings fixed, the pattern is now re-derived three different ways:
-        fenced code / line blocks thread a 5-scalar geometry tuple and call
-        `emit_content_line_prefixes` per line; definition lists slice the
-        stripped view directly; pipe tables build a materialized stripped
-        `Vec<&str>` and reuse `emit_content_line_prefixes`. All three are ad-hoc
-        patches for the same root: long-lookahead parsers re-derive the
-        container prefix on each line because the `StrippedLines` view only
-        covers `lines.first()`. Recommend a window owning
-        `(raw, base, &ContainerPrefix)` exposing peek-strip (`strip_at(i)`),
-        emission (`emit_prefix_at(builder, i) -> tail`), and iteration, so every
-        parser strips and emits prefixes uniformly. `StrippedLines`
-        (`container_prefix.rs`) is the natural seed; the window adds the
-        emit-into-builder method that currently only lives in `code_blocks.rs`.
-        Must be byte-equivalence verified against all four
-        `*_in_list_blockquote` golden snapshots.
+      - **Follow-up (window extraction) --- done for pipe tables + line
+        blocks.** The per-line container-stripping pattern is now consolidated
+        onto the `StrippedLines` window (`container_prefix.rs`). The prefix
+        emitters (`emit_content_line_prefixes`, `emit_blockquote_prefix_tokens`,
+        `strip_list_indent`, `bq_outer_of_list`) were relocated from
+        `code_blocks.rs` down into `container_prefix.rs` (the lower layer that
+        hosts `StrippedLines`) and re-exported, so the window can own the emit
+        step without an import cycle. `StrippedLines` gained a `dispatch` field
+        plus `with_dispatch`, `strip_at(i)` (peek, absolute index),
+        `emit_prefix_at(builder, i) -> tail` (continuation emit),
+        `dispatch_tail`, and `iter_from_base`. Pipe tables dropped their
+        hand-rolled materialized `Vec<&str>` for `strip_all()` and emit via the
+        window; line blocks dropped `silent_strip_container_prefix` and route
+        continuation lines through `strip_at` / `emit_prefix_at` (the bespoke
+        dispatch-line emitter `emit_open_line_prefixes` stays). Every
+        replacement routes through the same underlying functions the snapshots
+        pin --- all four `*_in_list_blockquote` snapshots plus the `pipe_table*`
+        and line-block snapshots are byte-identical. Definition lists are out of
+        scope (single-line consumer of a pre-stripped view, not a forward
+        scanner).
+        - **Remaining (deferred, standalone task)**: migrate fenced code / math
+          (`parse_fenced_code_block` / `parse_fenced_math_block` in
+          `code_blocks.rs`) onto the window. Kept separate because it carries
+          structural snapshot-drift risk the table/line-block migrations did
+          not: (1) the closing-fence detection loop runs
+          `count_blockquote_markers(probe)` with a `line_bq_depth < bq_depth`
+          break --- a forward-scan *termination* condition the window's
+          `strip_at` can't express (would need a new `bq_survivors_at(i)` method
+          or stay inline); (2) the open-fence emitter `prepare_fence_open_line`
+          (with `first_line_override`) has no window equivalent and must stay
+          bespoke. Recommend partial migration --- emission-loop
+          `emit_content_line_prefixes` → `emit_prefix_at`, detection
+          `inner_stripped` → `strip_at`, keep the bq-break inline, leave
+          `prepare_fence_open_line` / `strip_content_line_prefixes` untouched
+          --- gated hard on every fenced-code snapshot.
 - [ ] Stop letting `pandoc_ast.rs` drift into a second-stage parser. Load-
       bearing byte-walkers (`split_html_block_by_tags`, `parse_pandoc_blocks`
       and the refs/heading-id reparse helpers) re-tokenize source the CST should

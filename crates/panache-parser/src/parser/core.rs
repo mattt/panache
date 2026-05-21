@@ -3398,17 +3398,9 @@ impl<'a> Parser<'a> {
             // only when the dispatcher rejected the line and the raw source
             // line is itself a top-level line-block start (see guard above),
             // so threading zero container params is correct here.
-            let new_pos = parse_line_block(
-                &self.lines,
-                self.pos,
-                &mut self.builder,
-                self.config,
-                0,
-                0,
-                false,
-                false,
-                0,
-            );
+            let prefix = ContainerPrefix::default();
+            let window = StrippedLines::new(&self.lines, self.pos, &prefix);
+            let new_pos = parse_line_block(&window, &mut self.builder, self.config);
             if new_pos > self.pos {
                 return LineDispatch::consumed(new_pos - self.pos);
             }

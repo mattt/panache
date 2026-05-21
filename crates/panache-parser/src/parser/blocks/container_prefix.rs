@@ -412,13 +412,41 @@ pub(crate) fn strip_content_indent(line: &str, content_indent: usize) -> (&str, 
 pub(crate) struct StrippedLines<'a, 'p> {
     raw: &'a [&'a str],
     base: usize,
+    /// Absolute index (into `raw`) of the dispatch line — the line whose
+    /// container prefix the parser core already consumed. Equals `base`
+    /// unless built via [`Self::with_dispatch`] (e.g. pipe tables, whose
+    /// scan start can sit past a caption while dispatch stays at
+    /// `line_pos`).
+    dispatch: usize,
     prefix: &'p ContainerPrefix,
 }
 
 #[allow(dead_code)]
 impl<'a, 'p> StrippedLines<'a, 'p> {
     pub fn new(raw: &'a [&'a str], base: usize, prefix: &'p ContainerPrefix) -> Self {
-        Self { raw, base, prefix }
+        Self {
+            raw,
+            base,
+            dispatch: base,
+            prefix,
+        }
+    }
+
+    /// Like [`Self::new`] but names the dispatch line explicitly (absolute
+    /// index into `raw`), for parsers whose dispatch line differs from the
+    /// iteration start `base` — e.g. pipe tables scanning past a caption.
+    pub fn with_dispatch(
+        raw: &'a [&'a str],
+        base: usize,
+        dispatch: usize,
+        prefix: &'p ContainerPrefix,
+    ) -> Self {
+        Self {
+            raw,
+            base,
+            dispatch,
+            prefix,
+        }
     }
 
     /// Line 0 with emission-safe strip semantics (matches the legacy
@@ -474,6 +502,196 @@ impl<'a, 'p> StrippedLines<'a, 'p> {
     pub fn prefix(&self) -> &ContainerPrefix {
         self.prefix
     }
+
+    /// Absolute index (into `raw`) of the dispatch line. Equals `base`
+    /// unless built via [`Self::with_dispatch`].
+    pub fn dispatch_pos(&self) -> usize {
+        self.dispatch
+    }
+
+    /// Peek-strip the line at ABSOLUTE index `i`. Uses
+    /// [`ContainerPrefix::strip_line_0_for_emission`] when `i` is the
+    /// dispatch line, [`ContainerPrefix::strip`] otherwise. Pure
+    /// detection — emits nothing.
+    pub fn strip_at(&self, i: usize) -> &'a str {
+        let line = self.raw[i];
+        if i == self.dispatch {
+            self.prefix.strip_line_0_for_emission(line)
+        } else {
+            self.prefix.strip(line)
+        }
+    }
+
+    /// Materialize the whole buffer's peek-stripped view (absolute
+    /// indexing, including lines before `base`). Byte-for-byte equal to
+    /// the `Vec<&str>` table scans previously hand-rolled.
+    pub fn strip_all(&self) -> Vec<&'a str> {
+        (0..self.raw.len()).map(|i| self.strip_at(i)).collect()
+    }
+
+    /// Emit the continuation-line container prefix for the line at
+    /// ABSOLUTE index `i` as kind-tagged tokens, returning the
+    /// post-prefix tail. Thin wrapper over [`emit_content_line_prefixes`]
+    /// using the prefix's derived scalars; it therefore preserves that
+    /// function's `content_indent`-last ordering and is NOT a faithful
+    /// per-op walk of [`ContainerPrefix::ops`] (the divergence is dormant
+    /// while `content_indent == 0`, as in every current fixture). Use for
+    /// continuation lines only; for the dispatch line use
+    /// [`Self::dispatch_tail`].
+    pub fn emit_prefix_at(&self, builder: &mut GreenNodeBuilder<'static>, i: usize) -> &'a str {
+        emit_content_line_prefixes(
+            builder,
+            self.raw[i],
+            self.prefix.bq_depth(),
+            self.prefix.list_content_col(),
+            bq_outer_of_list(self.prefix),
+            self.prefix.content_indent(),
+        )
+    }
+
+    /// Dispatch-line tail for emission — emits no prefix tokens (the core
+    /// already emitted them upstream). Equals
+    /// `prefix.strip_line_0_for_emission(raw[dispatch])`.
+    pub fn dispatch_tail(&self) -> &'a str {
+        self.prefix
+            .strip_line_0_for_emission(self.raw[self.dispatch])
+    }
+
+    /// Iterate `(absolute_index, raw_line, peek_stripped)` from `base` to
+    /// the end of the buffer. `peek_stripped` follows the same
+    /// dispatch-aware rule as [`Self::strip_at`].
+    pub fn iter_from_base(&self) -> impl Iterator<Item = (usize, &'a str, &'a str)> + '_ {
+        (self.base..self.raw.len()).map(move |i| (i, self.raw[i], self.strip_at(i)))
+    }
+}
+
+/// Strip up to `list_content_col` columns of leading whitespace,
+/// stopping at the first non-whitespace byte (newlines stop the scan
+/// rather than being consumed — important on blank lines inside a
+/// fenced code block). Mirrors the legacy
+/// `byte_index_at_column`-based strip used by the formatter.
+pub(crate) fn strip_list_indent(line: &str, list_content_col: usize) -> &str {
+    if list_content_col == 0 {
+        return line;
+    }
+    let idx = byte_index_at_column(line, list_content_col);
+    &line[idx..]
+}
+
+/// Returns `true` iff the outermost active container in `prefix` is a
+/// blockquote (i.e. `prefix.ops()` starts with `BlockQuoteMarker`
+/// before any `ListAdvance`). Used to pick the bq-vs-list strip order
+/// on content/lookahead lines.
+pub(crate) fn bq_outer_of_list(prefix: &ContainerPrefix) -> bool {
+    for op in prefix.ops() {
+        match op {
+            StripOp::BlockQuoteMarker => return true,
+            StripOp::ListAdvance(_) => return false,
+            StripOp::ContentIndent(_) => {}
+        }
+    }
+    false
+}
+
+pub(crate) fn emit_blockquote_prefix_tokens(builder: &mut GreenNodeBuilder<'static>, prefix: &str) {
+    for ch in prefix.chars() {
+        if ch == '>' {
+            builder.token(SyntaxKind::BLOCK_QUOTE_MARKER.into(), ">");
+        } else {
+            let mut buf = [0u8; 4];
+            builder.token(SyntaxKind::WHITESPACE.into(), ch.encode_utf8(&mut buf));
+        }
+    }
+}
+
+pub(crate) fn emit_content_line_prefixes<'a>(
+    builder: &mut GreenNodeBuilder<'static>,
+    content_line: &'a str,
+    bq_depth: usize,
+    list_content_col: usize,
+    bq_outer: bool,
+    content_indent: usize,
+) -> &'a str {
+    // Strip and emit content-line (1+) prefixes in container-stack
+    // order:
+    //   bq_outer=true  → bq markers → list_content_col → content_indent
+    //   bq_outer=false → list_content_col → bq markers → content_indent
+    // Bq markers emit granular tokens (BLOCK_QUOTE_MARKER + WHITESPACE);
+    // list_content_col and content_indent emit WHITESPACE. Adjacent
+    // WHITESPACE emissions are coalesced into one token for
+    // byte-range-equivalent CST stability.
+    let mut s = content_line;
+    let mut pending_ws_start: Option<usize> = None;
+
+    let flush_ws = |builder: &mut GreenNodeBuilder<'static>,
+                    pending: &mut Option<usize>,
+                    current_offset: usize| {
+        if let Some(start) = *pending
+            && current_offset > start
+        {
+            builder.token(
+                SyntaxKind::WHITESPACE.into(),
+                &content_line[start..current_offset],
+            );
+            *pending = None;
+        }
+    };
+
+    let strip_and_remember_list =
+        |s: &mut &'a str, pending: &mut Option<usize>, list_content_col: usize| {
+            if list_content_col == 0 {
+                return;
+            }
+            let stripped = strip_list_indent(s, list_content_col);
+            let consumed = s.len() - stripped.len();
+            if consumed > 0 {
+                let start = content_line.len() - s.len();
+                if pending.is_none() {
+                    *pending = Some(start);
+                }
+                *s = stripped;
+            }
+        };
+
+    let strip_and_emit_bq = |builder: &mut GreenNodeBuilder<'static>,
+                             s: &mut &'a str,
+                             pending: &mut Option<usize>,
+                             bq_depth: usize| {
+        if bq_depth == 0 {
+            return;
+        }
+        let current_offset = content_line.len() - s.len();
+        flush_ws(builder, pending, current_offset);
+        let stripped = strip_n_blockquote_markers(s, bq_depth);
+        let prefix_len = s.len() - stripped.len();
+        if prefix_len > 0 {
+            emit_blockquote_prefix_tokens(builder, &s[..prefix_len]);
+        }
+        *s = stripped;
+    };
+
+    if bq_outer {
+        strip_and_emit_bq(builder, &mut s, &mut pending_ws_start, bq_depth);
+        strip_and_remember_list(&mut s, &mut pending_ws_start, list_content_col);
+    } else {
+        strip_and_remember_list(&mut s, &mut pending_ws_start, list_content_col);
+        strip_and_emit_bq(builder, &mut s, &mut pending_ws_start, bq_depth);
+    }
+
+    if content_indent > 0 {
+        let indent_bytes = byte_index_at_column(s, content_indent);
+        if s.len() >= indent_bytes && indent_bytes > 0 {
+            let start = content_line.len() - s.len();
+            if pending_ws_start.is_none() {
+                pending_ws_start = Some(start);
+            }
+            s = &s[indent_bytes..];
+        }
+    }
+
+    let final_offset = content_line.len() - s.len();
+    flush_ws(builder, &mut pending_ws_start, final_offset);
+    s
 }
 
 /// Advance past `target` columns of `line`. Tabs round up to the next
@@ -703,6 +921,89 @@ mod tests {
         assert_eq!(lines.get(1), "second");
         assert_eq!(lines.pos(), 1);
         assert_eq!(lines.raw_at(0), "first");
+    }
+
+    #[test]
+    fn strip_all_matches_hand_rolled_table_closure() {
+        // The materialized view pipe tables used to build by hand:
+        //   (0..len).map(|i| if i == dispatch { strip_line_0_for_emission }
+        //                     else            { strip })
+        let prefix =
+            ContainerPrefix::from_ops(&[StripOp::ListAdvance(2), StripOp::BlockQuoteMarker], true);
+        let raw = ["- > | a |", "  > |---|", "  > | 1 |"];
+        let dispatch = 0;
+        let lines = StrippedLines::with_dispatch(&raw, 0, dispatch, &prefix);
+        let expected: Vec<&str> = (0..raw.len())
+            .map(|i| {
+                if i == dispatch {
+                    prefix.strip_line_0_for_emission(raw[i])
+                } else {
+                    prefix.strip(raw[i])
+                }
+            })
+            .collect();
+        assert_eq!(lines.strip_all(), expected);
+    }
+
+    #[test]
+    fn strip_at_honors_dispatch_offset_past_base() {
+        // Pipe tables scan from `start_pos` (here 0, a caption line) while
+        // the dispatch line (marker-consumed) is `line_pos` (here 1).
+        let prefix =
+            ContainerPrefix::from_ops(&[StripOp::ListAdvance(2), StripOp::BlockQuoteMarker], true);
+        let raw = [": caption", "- > header", "  > sep"];
+        let dispatch = 1;
+        let lines = StrippedLines::with_dispatch(&raw, 0, dispatch, &prefix);
+        // Non-dispatch lines use the full strip.
+        assert_eq!(lines.strip_at(0), prefix.strip(raw[0]));
+        assert_eq!(lines.strip_at(2), prefix.strip(raw[2]));
+        // The dispatch line uses the emission-safe line-0 strip.
+        assert_eq!(
+            lines.strip_at(dispatch),
+            prefix.strip_line_0_for_emission(raw[dispatch])
+        );
+        assert_eq!(
+            lines.dispatch_tail(),
+            prefix.strip_line_0_for_emission(raw[dispatch])
+        );
+        assert_eq!(lines.dispatch_pos(), dispatch);
+    }
+
+    #[test]
+    fn iter_from_base_yields_absolute_index_and_peek() {
+        let prefix = ContainerPrefix::default();
+        let raw = ["pre", "first", "second"];
+        let lines = StrippedLines::new(&raw, 1, &prefix);
+        let collected: Vec<(usize, &str, &str)> = lines.iter_from_base().collect();
+        assert_eq!(
+            collected,
+            vec![(1, "first", "first"), (2, "second", "second")]
+        );
+    }
+
+    #[test]
+    fn emit_prefix_at_returns_continuation_tail() {
+        let prefix =
+            ContainerPrefix::from_ops(&[StripOp::ListAdvance(2), StripOp::BlockQuoteMarker], true);
+        let raw = ["- > header", "  > hello"];
+        let lines = StrippedLines::new(&raw, 0, &prefix);
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(SyntaxKind::DOCUMENT.into());
+        let tail = lines.emit_prefix_at(&mut builder, 1);
+        builder.finish_node();
+        // `  > ` stripped (list-col 2, then one bq marker) → "hello".
+        assert_eq!(tail, "hello");
+        assert_eq!(
+            tail,
+            emit_content_line_prefixes(
+                &mut GreenNodeBuilder::new(),
+                raw[1],
+                prefix.bq_depth(),
+                prefix.list_content_col(),
+                bq_outer_of_list(&prefix),
+                prefix.content_indent(),
+            )
+        );
     }
 
     #[test]
