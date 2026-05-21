@@ -36,6 +36,30 @@ fn horizontal_rule_before_setext_like_paragraph_stays_idempotent() {
 }
 
 #[test]
+fn list_nested_heading_normalizes_inline_code_like_top_level() {
+    // Headings inside list items went through a separate formatter that dumped
+    // raw `child.text()` instead of formatting inline nodes, so a code span's
+    // padding (`  code  `) was reformatted at the top level but not in a list.
+    let input = "- # `  code  `\n";
+    let out = format(input, None, None);
+    assert!(out.contains("`code`"), "code span not normalized: {out:?}");
+    assert!(!out.contains("`  code  `"), "raw code span left: {out:?}");
+    assert_eq!(format(&out, None, None), out, "must be idempotent");
+}
+
+#[test]
+fn list_nested_heading_normalizes_attributes_like_top_level() {
+    // The list-nested heading path also skipped attribute normalization.
+    let input = "- # Title {#id .a key=val}\n";
+    let out = format(input, None, None);
+    assert!(
+        out.contains("key=\"val\""),
+        "attributes not normalized: {out:?}"
+    );
+    assert_eq!(format(&out, None, None), out, "must be idempotent");
+}
+
+#[test]
 fn horizontal_rule_expands_to_line_width() {
     let cfg = panache_formatter::ConfigBuilder::default()
         .line_width(12)

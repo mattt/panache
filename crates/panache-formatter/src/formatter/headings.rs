@@ -1,12 +1,24 @@
+use rowan::NodeOrToken;
+
+use super::core::normalize_attribute_text;
+use super::inline::format_inline_node;
 use super::smart::normalize_smart_punctuation;
 use crate::config::Config;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
+/// Render a single heading line (`### content {attrs}`), formatting inline
+/// elements and normalizing attributes. Surrounding blank lines and the
+/// trailing newline are the caller's responsibility.
+///
+/// This is the single source of truth for heading content: both the
+/// document-body `HEADING` branch and the list-nested heading path call it, so
+/// inline content (code spans, links, emphasis) and attributes are reformatted
+/// identically regardless of where the heading appears. The `#` prefix means
+/// the rendered line can never collide with a thematic break.
 pub(super) fn format_heading(node: &SyntaxNode, config: &Config) -> String {
     let mut level = 1;
-    let mut content = String::new();
-    let mut saw_content = false;
     let mut attributes = String::new();
+    let mut content = String::new();
 
     for child in node.children() {
         match child.kind() {
@@ -16,42 +28,56 @@ pub(super) fn format_heading(node: &SyntaxNode, config: &Config) -> String {
             }
             SyntaxKind::SETEXT_HEADING_UNDERLINE => {
                 let t = child.text().to_string();
-                let first_char = t.trim().chars().next().unwrap_or('=');
-                if first_char == '=' {
-                    level = 1;
-                } else {
-                    level = 2;
-                }
+                level = if t.trim().starts_with('=') { 1 } else { 2 };
             }
             SyntaxKind::HEADING_CONTENT => {
-                let mut t = child.text().to_string();
-                t = t.trim_end().to_string();
-                let trimmed_hash = t.trim_end_matches('#').to_string();
-                if trimmed_hash.len() != t.len() {
-                    t = trimmed_hash.trim_end().to_string();
+                for element in child.children_with_tokens() {
+                    match element {
+                        NodeOrToken::Token(t) => {
+                            if t.kind() == SyntaxKind::NEWLINE {
+                                // Collapse internal newlines (multi-line setext
+                                // content like `Foo\nBar\n---`) to a single
+                                // space so the heading re-emits as one ATX line.
+                                if !content.ends_with(' ') {
+                                    content.push(' ');
+                                }
+                            } else {
+                                content.push_str(
+                                    normalize_smart_punctuation(
+                                        t.text(),
+                                        config.formatter_extensions.smart,
+                                        config.formatter_extensions.smart_quotes,
+                                    )
+                                    .as_ref(),
+                                );
+                            }
+                        }
+                        NodeOrToken::Node(n) => {
+                            content.push_str(&format_inline_node(&n, config));
+                        }
+                    }
                 }
-                content = normalize_smart_punctuation(
-                    t.trim(),
-                    config.formatter_extensions.smart,
-                    config.formatter_extensions.smart_quotes,
-                )
-                .to_string();
-                saw_content = true;
             }
             SyntaxKind::ATTRIBUTE => {
-                attributes = child.text().to_string();
+                attributes = normalize_attribute_text(&child.text().to_string());
             }
             _ => {}
         }
     }
-    if !saw_content {
-        content = node.text().to_string();
-    }
 
-    let mut out = format!("{} {}", "#".repeat(level), content);
+    // Trim trailing closing hashes and surrounding whitespace (`# Title #`).
+    let content = content
+        .trim_end_matches(|c: char| c == '#' || c.is_whitespace())
+        .trim_start();
+
+    let mut out = "#".repeat(level);
+    if !content.is_empty() {
+        out.push(' ');
+        out.push_str(content);
+    }
     if !attributes.is_empty() {
         out.push(' ');
-        out.push_str(attributes.trim());
+        out.push_str(&attributes);
     }
     out
 }

@@ -678,96 +678,12 @@ impl Formatter {
                     self.output.push('\n');
                 }
 
-                // Determine level
-                let mut level = 1;
-                let mut attributes = String::new();
-
-                // First pass: get level and attributes
-                for child in node.children() {
-                    match child.kind() {
-                        SyntaxKind::ATX_HEADING_MARKER => {
-                            let t = child.text().to_string();
-                            level = t.chars().take_while(|&c| c == '#').count().clamp(1, 6);
-                        }
-                        SyntaxKind::SETEXT_HEADING_UNDERLINE => {
-                            let t = child.text().to_string();
-                            if t.chars().all(|c| c == '=') {
-                                level = 1;
-                            } else {
-                                level = 2;
-                            }
-                        }
-                        SyntaxKind::ATTRIBUTE => {
-                            attributes = normalize_attribute_text(&child.text().to_string());
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Output heading marker
-                self.output.push_str(&"#".repeat(level));
-                self.output.push(' ');
-
-                // Second pass: format content by traversing tokens/nodes directly
-                // This preserves formatting without adding spaces between inline elements.
-                // Internal newlines (multi-line setext heading content like
-                // `Foo\nBar\n---`) collapse to a single space so the heading
-                // re-emits as a single ATX line; otherwise the formatter would
-                // write `## Foo\nBar`, which round-trips through the parser as
-                // `## Foo` plus a separate `Bar` paragraph and breaks idempotency.
-                let content_start = self.output.len();
-                for child in node.children() {
-                    if child.kind() == SyntaxKind::HEADING_CONTENT {
-                        for element in child.children_with_tokens() {
-                            match element {
-                                NodeOrToken::Token(t) => {
-                                    if t.kind() == SyntaxKind::NEWLINE {
-                                        if !self.output.ends_with(' ') {
-                                            self.output.push(' ');
-                                        }
-                                    } else {
-                                        // Bare heading text bypassed smart
-                                        // normalization (unlike paragraphs and
-                                        // list-nested headings), so `# —` stayed
-                                        // while a `—` paragraph became `---`.
-                                        // The `#` prefix means a heading can
-                                        // never collide with a thematic break.
-                                        self.output.push_str(
-                                            normalize_smart_punctuation(
-                                                t.text(),
-                                                self.config.formatter_extensions.smart,
-                                                self.config.formatter_extensions.smart_quotes,
-                                            )
-                                            .as_ref(),
-                                        );
-                                    }
-                                }
-                                NodeOrToken::Node(n) => {
-                                    // Format inline nodes (emphasis, code, spans, etc.)
-                                    let formatted = self.format_inline_node(&n);
-                                    self.output.push_str(&formatted);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Trim trailing whitespace and hashes from content
-                let content_end = self.output.len();
-                let content = self.output[content_start..content_end].to_string();
-                let trimmed = content.trim_end_matches(|c: char| c == '#' || c.is_whitespace());
-                self.output.truncate(content_start);
-                self.output.push_str(trimmed);
-
-                // Trim trailing whitespace from content
-                self.output = self.output.trim_end().to_string();
-
-                // Add attributes if present
-                if !attributes.is_empty() {
-                    self.output.push(' ');
-                    self.output.push_str(&attributes);
-                }
-
+                // Render the heading line itself via the shared, inline-aware
+                // renderer (smart normalization, inline nodes, attributes). The
+                // surrounding blank-line management stays here because it
+                // depends on document-body siblings.
+                self.output
+                    .push_str(&headings::format_heading(node, &self.config));
                 self.output.push('\n');
 
                 if let Some(next) = node.next_sibling()
@@ -2712,7 +2628,7 @@ impl Formatter {
     }
 }
 
-fn normalize_attribute_text(attr_text: &str) -> String {
+pub(super) fn normalize_attribute_text(attr_text: &str) -> String {
     let Some(inner) = attr_text
         .strip_prefix('{')
         .and_then(|s| s.strip_suffix('}'))
