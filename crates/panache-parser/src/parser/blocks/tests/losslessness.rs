@@ -1,5 +1,7 @@
+use super::helpers::{find_first, parse_blocks_gfm};
 use crate::options::ParserOptions;
 use crate::parser::Parser;
+use crate::syntax::SyntaxKind;
 
 #[test]
 fn test_losslessness_basic() {
@@ -250,6 +252,24 @@ fn test_losslessness_hashpipe_block_scalar_in_list_fenced_chunk() {
     let parser = Parser::new(input, &config);
     let tree = parser.parse();
     assert_eq!(tree.text().to_string(), input);
+}
+
+#[test]
+fn test_losslessness_gfm_reference_definition_and_shortcut_link() {
+    // Regression: GFM is a strict CommonMark superset, so it must recognize
+    // link reference definitions and shortcut reference links. Previously
+    // `gfm_defaults()` left `reference_links`/`shortcut_reference_links` off,
+    // so `[argmin]: url` fell through to a paragraph where
+    // `autolink_bare_uris` rewrote the bare URL into a full `[url](url)` link
+    // — duplicating bytes and breaking losslessness (the formatter then
+    // escaped the `[argmin]` brackets).
+    let input = "[argmin]\n\n[argmin]: https://github.com/argmin-rs/argmin\n";
+    let tree = parse_blocks_gfm(input);
+    assert_eq!(tree.text().to_string(), input, "GFM parse must be lossless");
+    assert!(
+        find_first(&tree, SyntaxKind::REFERENCE_DEFINITION).is_some(),
+        "GFM should parse `[label]: url` as a REFERENCE_DEFINITION, got:\n{tree:#?}"
+    );
 }
 
 #[test]

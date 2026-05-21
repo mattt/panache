@@ -502,6 +502,8 @@ impl Extensions {
         ext.inline_links = true;
         ext.pipe_tables = true;
         ext.raw_html = true;
+        ext.reference_links = true;
+        ext.shortcut_reference_links = true;
         ext.strikeout = true;
         ext.task_lists = true;
         ext.tex_math_dollars = true;
