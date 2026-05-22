@@ -1155,7 +1155,9 @@ fn process_node_recursive(
                                 NodeOrToken::Node(attr_node)
                                     if attr_node.kind() == SyntaxKind::ATTRIBUTE =>
                                 {
-                                    trailing_attrs = Some(attr_node.text().to_string());
+                                    trailing_attrs = Some(super::core::normalize_attribute_text(
+                                        &attr_node.text().to_string(),
+                                    ));
                                     let _ = children.next();
                                 }
                                 NodeOrToken::Token(t)

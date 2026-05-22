@@ -213,7 +213,27 @@ DOCUMENT@0..1063
       TEXT@858..869 "Slide Title"
     WHITESPACE@869..870 " "
     ATTRIBUTE@870..994
-      ATTRIBUTE@870..994 "{background-color=\"bl ..."
+      TEXT@870..871 "{"
+      ATTR_KEY_VALUE@871..895
+        ATTR_KEY@871..887 "background-color"
+        TEXT@887..888 "="
+        ATTR_VALUE@888..895 "\"black\""
+      WHITESPACE@895..896 " "
+      ATTR_KEY_VALUE@896..942
+        ATTR_KEY@896..912 "background-image"
+        TEXT@912..913 "="
+        ATTR_VALUE@913..942 "\"{{< placeholder 100  ..."
+      WHITESPACE@942..943 " "
+      ATTR_KEY_VALUE@943..966
+        ATTR_KEY@943..958 "background-size"
+        TEXT@958..959 "="
+        ATTR_VALUE@959..966 "\"100px\""
+      WHITESPACE@966..967 " "
+      ATTR_KEY_VALUE@967..993
+        ATTR_KEY@967..984 "background-repeat"
+        TEXT@984..985 "="
+        ATTR_VALUE@985..993 "\"repeat\""
+      TEXT@993..994 "}"
     NEWLINE@994..995 "\n"
   BLANK_LINE@995..996
     BLANK_LINE@995..996 "\n"

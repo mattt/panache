@@ -17,7 +17,7 @@ use crate::syntax::SyntaxKind;
 use rowan::GreenNodeBuilder;
 
 // Import attribute parsing
-use crate::parser::utils::attributes::try_parse_trailing_attributes;
+use crate::parser::utils::attributes::{emit_attribute_node, try_parse_trailing_attributes};
 
 /// Flags that control which inline spans the link-bracket scanner treats as
 /// opaque (so a `]` inside them does not terminate the link/image text).
@@ -376,9 +376,7 @@ pub fn emit_inline_image(
 
     // Emit raw attributes if present (preserve original formatting)
     if let Some(raw_attrs) = raw_attributes {
-        builder.start_node(SyntaxKind::ATTRIBUTE.into());
-        builder.token(SyntaxKind::ATTRIBUTE.into(), raw_attrs);
-        builder.finish_node();
+        emit_attribute_node(builder, raw_attrs);
     }
 
     builder.finish_node();
@@ -850,9 +848,7 @@ pub fn emit_inline_link(
 
     // Emit raw attributes if present (preserve original formatting)
     if let Some(raw_attrs) = raw_attributes {
-        builder.start_node(SyntaxKind::ATTRIBUTE.into());
-        builder.token(SyntaxKind::ATTRIBUTE.into(), raw_attrs);
-        builder.finish_node();
+        emit_attribute_node(builder, raw_attrs);
     }
 
     builder.finish_node();

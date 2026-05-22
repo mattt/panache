@@ -10,7 +10,9 @@ DOCUMENT@0..52
       DISPLAY_MATH_MARKER@9..11 "$$"
     WHITESPACE@11..12 " "
     ATTRIBUTE@12..32
-      ATTRIBUTE@12..32 "{#eq-primal-problem}"
+      TEXT@12..13 "{"
+      ATTR_ID@13..31 "#eq-primal-problem"
+      TEXT@31..32 "}"
     NEWLINE@32..33 "\n"
     CROSSREF@33..51
       CROSSREF_MARKER@33..34 "@"

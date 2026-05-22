@@ -169,7 +169,9 @@ DOCUMENT@0..529
     HEADING_CONTENT@390..413
       TEXT@390..413 "Heading with attributes"
     ATTRIBUTE@413..425
-      ATTRIBUTE@413..425 "{#custom-id}"
+      TEXT@413..414 "{"
+      ATTR_ID@414..424 "#custom-id"
+      TEXT@424..425 "}"
     NEWLINE@425..426 "\n"
   BLANK_LINE@426..427
     BLANK_LINE@426..427 "\n"
@@ -180,7 +182,11 @@ DOCUMENT@0..529
     HEADING_CONTENT@430..450
       TEXT@430..450 "Heading with classes"
     ATTRIBUTE@450..473
-      ATTRIBUTE@450..473 "{.important .highlight}"
+      TEXT@450..451 "{"
+      ATTR_CLASS@451..461 ".important"
+      WHITESPACE@461..462 " "
+      ATTR_CLASS@462..472 ".highlight"
+      TEXT@472..473 "}"
     NEWLINE@473..474 "\n"
   BLANK_LINE@474..475
     BLANK_LINE@474..475 "\n"
@@ -191,7 +197,12 @@ DOCUMENT@0..529
     HEADING_CONTENT@479..501
       TEXT@479..501 "Heading with key-value"
     ATTRIBUTE@501..514
-      ATTRIBUTE@501..514 "{width=\"100\"}"
+      TEXT@501..502 "{"
+      ATTR_KEY_VALUE@502..513
+        ATTR_KEY@502..507 "width"
+        TEXT@507..508 "="
+        ATTR_VALUE@508..513 "\"100\""
+      TEXT@513..514 "}"
     NEWLINE@514..515 "\n"
   BLANK_LINE@515..516
     BLANK_LINE@515..516 "\n"
@@ -203,5 +214,7 @@ DOCUMENT@0..529
       TEXT@518..522 "Test"
     WHITESPACE@522..523 " "
     ATTRIBUTE@523..528
-      ATTRIBUTE@523..528 "{#id}"
+      TEXT@523..524 "{"
+      ATTR_ID@524..527 "#id"
+      TEXT@527..528 "}"
     NEWLINE@528..529 "\n"

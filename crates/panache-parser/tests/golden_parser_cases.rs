@@ -426,6 +426,7 @@ golden_test_cases!(
     inline_link_dest_strict_commonmark,
     inline_link_dest_strict_pandoc,
     inline_code,
+    inline_code_attributes_lossless,
     inline_footnotes,
     inline_math,
     grid_table,

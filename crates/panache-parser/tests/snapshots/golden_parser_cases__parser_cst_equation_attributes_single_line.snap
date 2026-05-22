@@ -15,7 +15,9 @@ DOCUMENT@0..91
       DISPLAY_MATH_MARKER@45..47 "$$"
     WHITESPACE@47..48 " "
     ATTRIBUTE@48..62
-      ATTRIBUTE@48..62 "{#eq-einstein}"
+      TEXT@48..49 "{"
+      ATTR_ID@49..61 "#eq-einstein"
+      TEXT@61..62 "}"
     NEWLINE@62..63 "\n"
   BLANK_LINE@63..64
     BLANK_LINE@63..64 "\n"

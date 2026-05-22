@@ -375,19 +375,9 @@ fn heading_id_with_explicitness(node: &SyntaxNode) -> (String, bool) {
         .find(|c| c.kind() == SyntaxKind::HEADING_CONTENT)
         .map(|c| coalesce_inlines(inlines_from(&c)))
         .unwrap_or_default();
-    let attr = node.children_with_tokens().find_map(|el| match el {
-        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ATTRIBUTE => Some(n.text().to_string()),
-        NodeOrToken::Token(t) if t.kind() == SyntaxKind::ATTRIBUTE => Some(t.text().to_string()),
-        _ => None,
-    });
-    if let Some(raw) = attr {
-        let trimmed = raw.trim();
-        if let Some(inner) = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-            let parsed = parse_attr_block(inner);
-            if !parsed.id.is_empty() {
-                return (parsed.id, true);
-            }
-        }
+    let parsed = extract_attr_from_node(node);
+    if !parsed.id.is_empty() {
+        return (parsed.id, true);
     }
     (pandoc_slugify(&inlines_to_plaintext(&inlines)), false)
 }
@@ -838,28 +828,10 @@ fn heading_block(node: &SyntaxNode) -> Block {
     let final_id = REFS_CTX
         .with(|c| c.borrow().heading_id_by_offset.get(&offset).cloned())
         .unwrap_or_default();
-    let attr = node
-        .children_with_tokens()
-        .find_map(|el| match el {
-            NodeOrToken::Node(n) if n.kind() == SyntaxKind::ATTRIBUTE => Some(n.text().to_string()),
-            NodeOrToken::Token(t) if t.kind() == SyntaxKind::ATTRIBUTE => {
-                Some(t.text().to_string())
-            }
-            _ => None,
-        })
-        .map(|raw| {
-            let trimmed = raw.trim();
-            if let Some(inner) = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-                let mut attr = parse_attr_block(inner);
-                if attr.id.is_empty() {
-                    attr.id = final_id.clone();
-                }
-                attr
-            } else {
-                Attr::with_id(final_id.clone())
-            }
-        })
-        .unwrap_or_else(|| Attr::with_id(final_id));
+    let mut attr = extract_attr_from_node(node);
+    if attr.id.is_empty() {
+        attr.id = final_id;
+    }
     Block::Header(level, attr, inlines)
 }
 
@@ -1912,24 +1884,97 @@ fn parse_div_info(info: &str) -> Attr {
     Attr::default()
 }
 
-/// Read a child `ATTRIBUTE` (node or token) on `parent` and parse its
-/// `{...}` body into an `Attr`. Returns `Attr::default()` if no attribute
-/// is attached or the body isn't `{...}`-shaped.
-fn extract_attr_from_node(parent: &SyntaxNode) -> Attr {
-    let raw = parent.children_with_tokens().find_map(|el| match el {
-        NodeOrToken::Node(n) if n.kind() == SyntaxKind::ATTRIBUTE => Some(n.text().to_string()),
-        NodeOrToken::Token(t) if t.kind() == SyntaxKind::ATTRIBUTE => Some(t.text().to_string()),
-        _ => None,
+/// Build an `Attr` from an `ATTRIBUTE` node, reading structured `ATTR_*`
+/// children when the parser emitted them and otherwise reparsing the opaque
+/// `{...}` body. The structured path mirrors [`parse_attr_block`] semantics
+/// (only `.`-prefixed tokens are classes; values strip a `"` pair) so projector
+/// output is unchanged.
+fn attr_from_attribute_node(attr_node: &SyntaxNode) -> Attr {
+    let has_structured = attr_node.children_with_tokens().any(|el| {
+        matches!(
+            el.kind(),
+            SyntaxKind::ATTR_ID | SyntaxKind::ATTR_CLASS | SyntaxKind::ATTR_KEY_VALUE
+        )
     });
-    let Some(raw) = raw else {
-        return Attr::default();
-    };
-    let trimmed = raw.trim();
-    if let Some(inner) = trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-        parse_attr_block(inner)
-    } else {
-        Attr::default()
+    if !has_structured {
+        let raw = attr_node.text().to_string();
+        return raw
+            .trim()
+            .strip_prefix('{')
+            .and_then(|s| s.strip_suffix('}'))
+            .map(parse_attr_block)
+            .unwrap_or_default();
     }
+
+    let mut attr = Attr::default();
+    for el in attr_node.children_with_tokens() {
+        match el.kind() {
+            SyntaxKind::ATTR_ID => {
+                if let Some(t) = el.as_token() {
+                    attr.id = t.text().strip_prefix('#').unwrap_or(t.text()).to_string();
+                }
+            }
+            SyntaxKind::ATTR_CLASS => {
+                // `=format` pseudo-classes are not `.`-prefixed; `parse_attr_block`
+                // never produced them, so drop them here for output parity.
+                if let Some(c) = el.as_token().and_then(|t| t.text().strip_prefix('.')) {
+                    attr.classes.push(c.to_string());
+                }
+            }
+            SyntaxKind::ATTR_KEY_VALUE => {
+                if let Some(kv) = el.as_node() {
+                    let key = attr_kv_child_text(kv, SyntaxKind::ATTR_KEY);
+                    if !key.is_empty() {
+                        let value = strip_attr_value_quotes(&attr_kv_child_text(
+                            kv,
+                            SyntaxKind::ATTR_VALUE,
+                        ));
+                        attr.kvs.push((key, value));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    attr
+}
+
+/// Text of the first child token of `kv` with the given kind, or empty.
+fn attr_kv_child_text(kv: &SyntaxNode, kind: SyntaxKind) -> String {
+    kv.children_with_tokens()
+        .find(|el| el.kind() == kind)
+        .and_then(|el| el.as_token().map(|t| t.text().to_string()))
+        .unwrap_or_default()
+}
+
+/// Strip a matching pair of double quotes from an attribute value, mirroring
+/// [`parse_attr_block`] (single quotes are kept, as it does).
+fn strip_attr_value_quotes(raw: &str) -> String {
+    if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
+        raw[1..raw.len() - 1].to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Read a child `ATTRIBUTE` (node or token) on `parent` into an `Attr`. Returns
+/// `Attr::default()` if no attribute is attached or the body isn't
+/// `{...}`-shaped.
+fn extract_attr_from_node(parent: &SyntaxNode) -> Attr {
+    parent
+        .children_with_tokens()
+        .find(|el| el.kind() == SyntaxKind::ATTRIBUTE)
+        .map(|el| match el {
+            NodeOrToken::Node(n) => attr_from_attribute_node(&n),
+            NodeOrToken::Token(t) => t
+                .text()
+                .trim()
+                .strip_prefix('{')
+                .and_then(|s| s.strip_suffix('}'))
+                .map(parse_attr_block)
+                .unwrap_or_default(),
+        })
+        .unwrap_or_default()
 }
 
 /// Parse the body of an attribute block like `#my-id .class1 .class2 key=value`.
@@ -2424,9 +2469,7 @@ fn pipe_table_caption(node: &SyntaxNode) -> (Vec<Inline>, Option<Attr>) {
                     continue;
                 }
                 if n.kind() == SyntaxKind::ATTRIBUTE {
-                    let raw = n.text().to_string();
-                    let inner = raw.trim().trim_start_matches('{').trim_end_matches('}');
-                    caption_attr = Some(parse_attr_block(inner));
+                    caption_attr = Some(attr_from_attribute_node(&n));
                     // Drop any trailing whitespace inline pushed before the attribute.
                     if matches!(out.last(), Some(Inline::Space)) {
                         out.pop();

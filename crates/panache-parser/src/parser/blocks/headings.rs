@@ -4,7 +4,9 @@ use crate::options::ParserOptions;
 use crate::syntax::SyntaxKind;
 use rowan::GreenNodeBuilder;
 
-use crate::parser::utils::attributes::try_parse_trailing_attributes_with_pos;
+use crate::parser::utils::attributes::{
+    emit_attribute_node, try_parse_trailing_attributes_with_pos,
+};
 use crate::parser::utils::helpers::trim_end_spaces_tabs;
 use crate::parser::utils::inline_emission;
 
@@ -221,9 +223,7 @@ pub(crate) fn emit_setext_heading_body(
 
     // Emit attributes if present
     if let Some(attr_text) = attr_text {
-        builder.start_node(SyntaxKind::ATTRIBUTE.into());
-        builder.token(SyntaxKind::ATTRIBUTE.into(), attr_text);
-        builder.finish_node();
+        emit_attribute_node(builder, attr_text);
     }
 
     // Emit newline after text line
@@ -387,9 +387,7 @@ pub(crate) fn emit_atx_heading(
 
     // Emit attributes if present
     if let Some(attr_text) = attr_text {
-        builder.start_node(SyntaxKind::ATTRIBUTE.into());
-        builder.token(SyntaxKind::ATTRIBUTE.into(), attr_text);
-        builder.finish_node();
+        emit_attribute_node(builder, attr_text);
     }
 
     if !closing_suffix.is_empty() {

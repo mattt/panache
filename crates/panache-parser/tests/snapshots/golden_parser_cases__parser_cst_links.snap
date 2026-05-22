@@ -20,7 +20,12 @@ DOCUMENT@0..483
         TEXT@78..102 "../images/networkfig.png"
       LINK_DEST_END@102..103 ")"
       ATTRIBUTE@103..114
-        ATTRIBUTE@103..114 "{width=70%}"
+        TEXT@103..104 "{"
+        ATTR_KEY_VALUE@104..113
+          ATTR_KEY@104..109 "width"
+          TEXT@109..110 "="
+          ATTR_VALUE@110..113 "70%"
+        TEXT@113..114 "}"
     TEXT@114..121 " A word"
     NEWLINE@121..122 "\n"
   BLANK_LINE@122..123

@@ -17,7 +17,9 @@ DOCUMENT@0..356
         TEXT@37..47 "My Caption"
         WHITESPACE@47..48 " "
         ATTRIBUTE@48..60
-          ATTRIBUTE@48..60 "{#tbl:foo-1}"
+          TEXT@48..49 "{"
+          ATTR_ID@49..59 "#tbl:foo-1"
+          TEXT@59..60 "}"
         NEWLINE@60..61 "\n"
       BLANK_LINE@61..62
         BLANK_LINE@61..62 "\n"
@@ -109,7 +111,9 @@ DOCUMENT@0..356
         TEXT@192..203 "My Caption2"
         WHITESPACE@203..204 " "
         ATTRIBUTE@204..216
-          ATTRIBUTE@204..216 "{#tbl:foo-2}"
+          TEXT@204..205 "{"
+          ATTR_ID@205..215 "#tbl:foo-2"
+          TEXT@215..216 "}"
         NEWLINE@216..217 "\n"
       BLANK_LINE@217..218
         BLANK_LINE@217..218 "\n"

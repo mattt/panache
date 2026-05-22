@@ -223,7 +223,9 @@ DOCUMENT@0..4373
       TEXT@1600..1629 "Clone the Template Re ..."
     WHITESPACE@1629..1630 " "
     ATTRIBUTE@1630..1643
-      ATTRIBUTE@1630..1643 "{#clone-repo}"
+      TEXT@1630..1631 "{"
+      ATTR_ID@1631..1642 "#clone-repo"
+      TEXT@1642..1643 "}"
     NEWLINE@1643..1644 "\n"
   BLANK_LINE@1644..1645
     BLANK_LINE@1644..1645 "\n"
@@ -290,7 +292,12 @@ DOCUMENT@0..4373
             TEXT@2030..2068 "images/github-create- ..."
           IMAGE_DEST_END@2068..2069 ")"
           ATTRIBUTE@2069..2255
-            ATTRIBUTE@2069..2255 "{fig-alt=\"Screenshot  ..."
+            TEXT@2069..2070 "{"
+            ATTR_KEY_VALUE@2070..2254
+              ATTR_KEY@2070..2077 "fig-alt"
+              TEXT@2077..2078 "="
+              ATTR_VALUE@2078..2254 "\"Screenshot of GitHub ..."
+            TEXT@2254..2255 "}"
         NEWLINE@2255..2256 "\n"
     BLANK_LINE@2256..2257
       BLANK_LINE@2256..2257 "\n"
@@ -406,7 +413,12 @@ DOCUMENT@0..4373
           TEXT@3028..3051 "images/rstudio-open.png"
         IMAGE_DEST_END@3051..3052 ")"
         ATTRIBUTE@3052..3324
-          ATTRIBUTE@3052..3324 "{fig-alt=\"Screenshot  ..."
+          TEXT@3052..3053 "{"
+          ATTR_KEY_VALUE@3053..3323
+            ATTR_KEY@3053..3060 "fig-alt"
+            TEXT@3060..3061 "="
+            ATTR_VALUE@3061..3323 "\"Screenshot of the RS ..."
+          TEXT@3323..3324 "}"
       NEWLINE@3324..3325 "\n"
     DIV_FENCE_CLOSE@3325..3329
       TEXT@3325..3328 ":::"
@@ -465,7 +477,14 @@ DOCUMENT@0..4373
           TEXT@3684..3707 "images/jupyter-open.png"
         IMAGE_DEST_END@3707..3708 ")"
         ATTRIBUTE@3708..3909
-          ATTRIBUTE@3708..3909 "{.border fig-alt=\"A s ..."
+          TEXT@3708..3709 "{"
+          ATTR_CLASS@3709..3716 ".border"
+          WHITESPACE@3716..3717 " "
+          ATTR_KEY_VALUE@3717..3908
+            ATTR_KEY@3717..3724 "fig-alt"
+            TEXT@3724..3725 "="
+            ATTR_VALUE@3725..3908 "\"A screenshot of Jupy ..."
+          TEXT@3908..3909 "}"
       NEWLINE@3909..3910 "\n"
     DIV_FENCE_CLOSE@3910..3914
       TEXT@3910..3913 ":::"
@@ -500,7 +519,12 @@ DOCUMENT@0..4373
           TEXT@4137..4159 "images/vscode-open.png"
         IMAGE_DEST_END@4159..4160 ")"
         ATTRIBUTE@4160..4368
-          ATTRIBUTE@4160..4368 "{fig-alt=\"A screensho ..."
+          TEXT@4160..4161 "{"
+          ATTR_KEY_VALUE@4161..4367
+            ATTR_KEY@4161..4168 "fig-alt"
+            TEXT@4168..4169 "="
+            ATTR_VALUE@4169..4367 "\"A screenshot of VS C ..."
+          TEXT@4367..4368 "}"
       NEWLINE@4368..4369 "\n"
     DIV_FENCE_CLOSE@4369..4373
       TEXT@4369..4372 ":::"

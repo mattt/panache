@@ -927,7 +927,7 @@ fn parse_inline_range_impl(
                 );
 
                 // Check for raw inline
-                if let Some(ref attrs) = attributes
+                if let Some((ref attrs, _)) = attributes
                     && config.extensions.raw_attribute
                     && let Some(format) = is_raw_inline(attrs)
                 {
@@ -941,7 +941,12 @@ fn parse_inline_range_impl(
                     text_start = pos;
                     continue;
                 } else {
-                    emit_code_span(builder, content, backtick_count, attributes);
+                    emit_code_span(
+                        builder,
+                        content,
+                        backtick_count,
+                        attributes.as_ref().map(|(_, raw)| *raw),
+                    );
                 }
 
                 pos += len;
@@ -1153,22 +1158,17 @@ fn parse_inline_range_impl(
                 let total_len = len + attr_len;
                 emit_display_math(builder, content, dollar_count);
 
-                // Emit attributes if present
+                // Emit attributes if present, structured over the raw source
+                // bytes (leading whitespace split out as its own token).
                 if attr_len > 0 {
-                    use crate::parser::utils::attributes::{
-                        emit_attributes, try_parse_trailing_attributes,
-                    };
+                    use crate::parser::utils::attributes::emit_attribute_node;
                     let attr_text = &text[pos + len..pos + total_len];
-                    if let Some((attr_block, _text_before)) =
-                        try_parse_trailing_attributes(attr_text)
-                    {
-                        let trimmed_after = attr_text.trim_start();
-                        let ws_len = attr_text.len() - trimmed_after.len();
-                        if ws_len > 0 {
-                            builder.token(SyntaxKind::WHITESPACE.into(), &attr_text[..ws_len]);
-                        }
-                        emit_attributes(builder, &attr_block);
+                    let trimmed_after = attr_text.trim_start();
+                    let ws_len = attr_text.len() - trimmed_after.len();
+                    if ws_len > 0 {
+                        builder.token(SyntaxKind::WHITESPACE.into(), &attr_text[..ws_len]);
                     }
+                    emit_attribute_node(builder, trimmed_after);
                 }
 
                 pos += total_len;

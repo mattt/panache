@@ -111,7 +111,9 @@ DOCUMENT@0..706
       TEXT@385..408 "Heading with attributes"
     WHITESPACE@408..409 " "
     ATTRIBUTE@409..421
-      ATTRIBUTE@409..421 "{#custom-id}"
+      TEXT@409..410 "{"
+      ATTR_ID@410..420 "#custom-id"
+      TEXT@420..421 "}"
     NEWLINE@421..422 "\n"
     SETEXT_HEADING_UNDERLINE@422..459
       SETEXT_HEADING_UNDERLINE@422..459 "--------------------- ..."

@@ -200,5 +200,12 @@ DOCUMENT@0..1380
         EMPHASIS_MARKER@1348..1349 "*"
       WHITESPACE@1349..1350 " "
       ATTRIBUTE@1350..1379
-        ATTRIBUTE@1350..1379 "{#nordics source=\"wik ..."
+        TEXT@1350..1351 "{"
+        ATTR_ID@1351..1359 "#nordics"
+        WHITESPACE@1359..1360 " "
+        ATTR_KEY_VALUE@1360..1378
+          ATTR_KEY@1360..1366 "source"
+          TEXT@1366..1367 "="
+          ATTR_VALUE@1367..1378 "\"wikipedia\""
+        TEXT@1378..1379 "}"
       NEWLINE@1379..1380 "\n"

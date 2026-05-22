@@ -278,6 +278,7 @@ golden_test_cases!(
     images,
     indented_code,
     inline_code,
+    inline_code_attribute_normalization,
     inline_link_dest_strict_commonmark,
     inline_footnotes,
     inline_math,

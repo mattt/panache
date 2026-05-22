@@ -4,12 +4,18 @@ use rowan::GreenNodeBuilder;
 
 // Import the attribute parsing from utils
 use crate::parser::utils::attributes::{
-    AttributeBlock, emit_attributes, try_parse_trailing_attributes,
+    AttributeBlock, emit_attribute_node, try_parse_trailing_attributes,
 };
 
 /// Try to parse a code span starting at the current position.
-/// Returns (total_len, code_content, backtick_count, optional_attributes) if successful.
-pub fn try_parse_code_span(text: &str) -> Option<(usize, &str, usize, Option<AttributeBlock>)> {
+/// Returns `(total_len, code_content, backtick_count, attributes)` if
+/// successful. When trailing attributes are present, `attributes` carries both
+/// the parsed [`AttributeBlock`] (for raw-inline / extension-gating decisions)
+/// and the raw `{...}` source slice (for lossless structured emission).
+#[allow(clippy::type_complexity)]
+pub fn try_parse_code_span(
+    text: &str,
+) -> Option<(usize, &str, usize, Option<(AttributeBlock, &str)>)> {
     // Count opening backticks
     let opening_backticks = text.bytes().take_while(|&b| b == b'`').count();
     if opening_backticks == 0 {
@@ -52,7 +58,12 @@ pub fn try_parse_code_span(text: &str) -> Option<(usize, &str, usize, Option<Att
                     // Try to parse as attributes
                     if let Some((attrs, _)) = try_parse_trailing_attributes(attr_text) {
                         let total_len = after_close + close_brace_pos + 1;
-                        return Some((total_len, code_content, opening_backticks, Some(attrs)));
+                        return Some((
+                            total_len,
+                            code_content,
+                            opening_backticks,
+                            Some((attrs, attr_text)),
+                        ));
                     }
                 }
             }
@@ -73,7 +84,7 @@ pub fn emit_code_span(
     builder: &mut GreenNodeBuilder,
     content: &str,
     backtick_count: usize,
-    attributes: Option<AttributeBlock>,
+    attr_text: Option<&str>,
 ) {
     builder.start_node(SyntaxKind::INLINE_CODE.into());
 
@@ -92,9 +103,9 @@ pub fn emit_code_span(
         &"`".repeat(backtick_count),
     );
 
-    // Emit attributes if present
-    if let Some(attrs) = attributes {
-        emit_attributes(builder, &attrs);
+    // Emit attributes if present, structured over the raw source bytes.
+    if let Some(raw) = attr_text {
+        emit_attribute_node(builder, raw);
     }
 
     builder.finish_node();
@@ -154,8 +165,9 @@ mod tests {
         assert_eq!(content, "code");
         assert_eq!(backticks, 1);
         assert!(attrs.is_some());
-        let attrs = attrs.unwrap();
+        let (attrs, raw) = attrs.unwrap();
         assert_eq!(attrs.classes, vec!["python"]);
+        assert_eq!(raw, "{.python}");
     }
 
     #[test]
@@ -166,7 +178,7 @@ mod tests {
         assert_eq!(content, "code");
         assert_eq!(backticks, 1);
         assert!(attrs.is_some());
-        let attrs = attrs.unwrap();
+        let (attrs, _raw) = attrs.unwrap();
         assert_eq!(attrs.identifier, Some("mycode".to_string()));
     }
 
@@ -178,7 +190,7 @@ mod tests {
         assert_eq!(content, "x + y");
         assert_eq!(backticks, 1);
         assert!(attrs.is_some());
-        let attrs = attrs.unwrap();
+        let (attrs, _raw) = attrs.unwrap();
         assert_eq!(attrs.identifier, Some("calc".to_string()));
         assert_eq!(attrs.classes, vec!["haskell", "eval"]);
     }

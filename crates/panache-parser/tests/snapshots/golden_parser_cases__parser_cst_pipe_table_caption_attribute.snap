@@ -38,5 +38,7 @@ DOCUMENT@0..62
       WHITESPACE@47..49 "  "
       TABLE_CAPTION_PREFIX@49..51 ": "
       ATTRIBUTE@51..61
-        ATTRIBUTE@51..61 "{#tbl-glm}"
+        TEXT@51..52 "{"
+        ATTR_ID@52..60 "#tbl-glm"
+        TEXT@60..61 "}"
       NEWLINE@61..62 "\n"

@@ -1,4 +1,5 @@
 use crate::config::{Config, MathDelimiterStyle};
+use crate::formatter::core::normalize_attribute_text;
 use crate::formatter::shortcodes::format_shortcode;
 use crate::formatter::smart::normalize_smart_punctuation;
 use crate::syntax::{DisplayMath, SyntaxKind, SyntaxNode};
@@ -67,7 +68,10 @@ pub(super) fn format_inline_node(node: &SyntaxNode, config: &Config) -> String {
             for child in node.children_with_tokens() {
                 match child {
                     NodeOrToken::Node(n) if n.kind() == SyntaxKind::ATTRIBUTE => {
-                        attributes = n.text().to_string();
+                        // The parser now preserves attribute bytes verbatim;
+                        // normalization (id-first, quoted values) is a formatter
+                        // concern, applied here as for headings.
+                        attributes = normalize_attribute_text(&n.text().to_string());
                     }
                     NodeOrToken::Token(t) => {
                         if t.kind() == SyntaxKind::BLOCK_QUOTE_MARKER {

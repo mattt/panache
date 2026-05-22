@@ -1,0 +1,22 @@
+---
+source: crates/panache-parser/tests/golden_parser_cases.rs
+expression: cst_output
+---
+DOCUMENT@0..20
+  PARAGRAPH@0..20
+    INLINE_CODE@0..19
+      INLINE_CODE_MARKER@0..1 "`"
+      INLINE_CODE_CONTENT@1..5 "code"
+      INLINE_CODE_MARKER@5..6 "`"
+      ATTRIBUTE@6..19
+        TEXT@6..7 "{"
+        ATTR_CLASS@7..9 ".r"
+        WHITESPACE@9..10 " "
+        ATTR_ID@10..12 "#x"
+        WHITESPACE@12..13 " "
+        ATTR_KEY_VALUE@13..18
+          ATTR_KEY@13..16 "key"
+          TEXT@16..17 "="
+          ATTR_VALUE@17..18 "v"
+        TEXT@18..19 "}"
+    NEWLINE@19..20 "\n"

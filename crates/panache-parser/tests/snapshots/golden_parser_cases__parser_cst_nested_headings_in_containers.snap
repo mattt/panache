@@ -15,7 +15,9 @@ DOCUMENT@0..80
           TEXT@4..11 "Heading"
         WHITESPACE@11..12 " "
         ATTRIBUTE@12..17
-          ATTRIBUTE@12..17 "{#id}"
+          TEXT@12..13 "{"
+          ATTR_ID@13..16 "#id"
+          TEXT@16..17 "}"
         NEWLINE@17..18 "\n"
       PLAIN@18..30
         TEXT@18..29 "  Some text"

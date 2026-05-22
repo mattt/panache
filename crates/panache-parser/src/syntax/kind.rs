@@ -34,7 +34,16 @@ pub enum SyntaxKind {
     COMMENT_START,      // <!--
     COMMENT_END,        // -->
     ATTRIBUTE,          // {#label} for headings, math, etc.
-    HORIZONTAL_RULE,    // --- or *** or ___
+    // Structured children of a Pandoc `{...}` ATTRIBUTE. Each wraps the
+    // existing source bytes (markers/quotes included); the projector strips
+    // them. Absent on opaque ATTRIBUTE forms (MMD `[#id]`, raw-inline
+    // `{=format}`, fallback), which keep a single inner ATTRIBUTE token.
+    ATTR_ID,         // #id (token text includes the leading '#')
+    ATTR_CLASS,      // .class (token text includes the leading '.')
+    ATTR_KEY_VALUE,  // key=value (node grouping the pieces below)
+    ATTR_KEY,        // key (token, no '=')
+    ATTR_VALUE,      // value or "value"/'value' (token text includes quotes)
+    HORIZONTAL_RULE, // --- or *** or ___
     BLANK_LINE,
 
     // Links and images

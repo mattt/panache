@@ -105,120 +105,181 @@ fn find_matching_open_brace_for_trailing_block(text: &str) -> Option<usize> {
     end_brace_open
 }
 
-/// Parse the content inside the attribute braces
-pub fn parse_attribute_content(content: &str) -> Option<AttributeBlock> {
-    let mut identifier = None;
-    let mut classes = Vec::new();
-    let mut key_values = Vec::new();
+/// One recognized component inside an attribute `{...}` body, as byte ranges
+/// relative to the `content` slice passed to [`attribute_content_spans`] (the
+/// bytes strictly between `{` and `}`). Marker bytes (`#`/`.`/`=`) and value
+/// quotes are kept INSIDE the ranges so the emitter can wrap the exact source
+/// bytes; the string-deriving helpers strip them.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum AttrComponent {
+    /// `#id` — range includes the leading `#`.
+    Id(std::ops::Range<usize>),
+    /// `.class` or `=format` — range includes the leading `.`/`=` marker.
+    Class(std::ops::Range<usize>),
+    /// `key=value`: key range, `=` byte index, value range (the value range
+    /// includes surrounding quotes when present).
+    KeyValue {
+        key: std::ops::Range<usize>,
+        eq: usize,
+        value: std::ops::Range<usize>,
+    },
+}
 
-    let content = content.trim();
-    if content.is_empty() {
-        return None; // Empty {} is not valid
+/// Recognized components of an attribute `{...}` body, in source order. The
+/// single source of truth shared by detection ([`parse_attribute_content`],
+/// which derives owned strings) and emission (`emit_attribute_node`, which
+/// wraps these byte ranges in ATTR_* CST nodes) — one walk, no detect/emit
+/// drift. Bytes the scan skips (duplicate `#id`, malformed tokens, whitespace)
+/// are not components; the emitter recovers them from the gaps between ranges.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AttributeSpans {
+    pub components: Vec<AttrComponent>,
+}
+
+/// Strip a matching pair of surrounding quotes (`"` or `'`) from an attribute
+/// value's raw bytes, yielding the semantic value. Mirrors the quote handling
+/// in the legacy [`parse_attribute_content`] walk: a leading quote is always
+/// dropped, and a trailing quote of the same kind is dropped when present (so
+/// unterminated quotes keep their tail).
+fn attr_value_string(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    if let Some(&q) = bytes.first()
+        && (q == b'"' || q == b'\'')
+    {
+        let inner = &raw[1..];
+        return inner.strip_suffix(q as char).unwrap_or(inner).to_string();
     }
+    raw.to_string()
+}
 
-    let mut pos = 0;
+/// Scan an attribute `{...}` body into [`AttributeSpans`]. Returns `None` when
+/// no component is recognized (empty/whitespace-only/`{}` is not a valid
+/// attribute block). Offsets are relative to `content`.
+pub(crate) fn attribute_content_spans(content: &str) -> Option<AttributeSpans> {
     let bytes = content.as_bytes();
+    let mut pos = 0;
+    let mut components: Vec<AttrComponent> = Vec::new();
+    let mut have_id = false;
 
     while pos < bytes.len() {
-        // Skip whitespace
+        // Skip whitespace.
         while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
             pos += 1;
         }
-
         if pos >= bytes.len() {
             break;
         }
 
-        // Check what kind of attribute this is
         if bytes[pos] == b'=' {
-            // Special case: {=format} for raw attributes
-            // This is treated as a class ".=format" for compatibility
-            pos += 1; // Skip =
+            // {=format} raw-attribute marker — recorded as a class whose range
+            // includes the `=` (the string derivation keeps the `=`).
             let start = pos;
+            pos += 1; // skip '='
             while pos < bytes.len() && !bytes[pos].is_ascii_whitespace() && bytes[pos] != b'}' {
                 pos += 1;
             }
-            if pos > start {
-                // Store as "=format" class (with the = prefix)
-                classes.push(format!("={}", &content[start..pos]));
+            if pos > start + 1 {
+                components.push(AttrComponent::Class(start..pos));
             }
         } else if bytes[pos] == b'#' {
-            // Identifier (only take first one)
-            if identifier.is_none() {
-                pos += 1; // Skip #
-                let start = pos;
-                while pos < bytes.len() && !bytes[pos].is_ascii_whitespace() && bytes[pos] != b'}' {
-                    pos += 1;
-                }
-                if pos > start {
-                    identifier = Some(content[start..pos].to_string());
-                }
-            } else {
-                // Skip duplicate identifiers
-                pos += 1;
-                while pos < bytes.len() && !bytes[pos].is_ascii_whitespace() && bytes[pos] != b'}' {
-                    pos += 1;
-                }
-            }
-        } else if bytes[pos] == b'.' {
-            // Class
-            pos += 1; // Skip .
             let start = pos;
+            pos += 1; // skip '#'
             while pos < bytes.len() && !bytes[pos].is_ascii_whitespace() && bytes[pos] != b'}' {
                 pos += 1;
             }
-            if pos > start {
-                classes.push(content[start..pos].to_string());
+            // Only the first non-empty identifier counts; later `#…` runs and a
+            // bare `#` are scanned but not recorded (recovered from the gap).
+            if !have_id && pos > start + 1 {
+                components.push(AttrComponent::Id(start..pos));
+                have_id = true;
+            }
+        } else if bytes[pos] == b'.' {
+            let start = pos;
+            pos += 1; // skip '.'
+            while pos < bytes.len() && !bytes[pos].is_ascii_whitespace() && bytes[pos] != b'}' {
+                pos += 1;
+            }
+            if pos > start + 1 {
+                components.push(AttrComponent::Class(start..pos));
             }
         } else {
-            // Key-value pair
+            // key=value
             let key_start = pos;
             while pos < bytes.len() && bytes[pos] != b'=' && !bytes[pos].is_ascii_whitespace() {
                 pos += 1;
             }
-
             if pos >= bytes.len() || bytes[pos] != b'=' {
-                // Not a valid key=value, skip this token
+                // Not a valid key=value: skip the token (recovered from the gap).
                 while pos < bytes.len() && !bytes[pos].is_ascii_whitespace() {
                     pos += 1;
                 }
                 continue;
             }
+            let key_end = pos;
+            let eq = pos;
+            pos += 1; // skip '='
 
-            let key = content[key_start..pos].to_string();
-            pos += 1; // Skip =
-
-            // Parse value (may be quoted)
-            let value = if pos < bytes.len() && (bytes[pos] == b'"' || bytes[pos] == b'\'') {
+            let value_start = pos;
+            if pos < bytes.len() && (bytes[pos] == b'"' || bytes[pos] == b'\'') {
                 let quote = bytes[pos];
-                pos += 1; // Skip opening quote
-                let val_start = pos;
+                pos += 1; // opening quote
                 while pos < bytes.len() && bytes[pos] != quote {
                     pos += 1;
                 }
-                let val = content[val_start..pos].to_string();
                 if pos < bytes.len() {
-                    pos += 1; // Skip closing quote
+                    pos += 1; // closing quote
                 }
-                val
             } else {
-                // Unquoted value
-                let val_start = pos;
                 while pos < bytes.len() && !bytes[pos].is_ascii_whitespace() && bytes[pos] != b'}' {
                     pos += 1;
                 }
-                content[val_start..pos].to_string()
-            };
-
-            if !key.is_empty() {
-                key_values.push((key, value));
+            }
+            if key_end > key_start {
+                components.push(AttrComponent::KeyValue {
+                    key: key_start..key_end,
+                    eq,
+                    value: value_start..pos,
+                });
             }
         }
     }
 
-    // At least one attribute must be present
-    if identifier.is_none() && classes.is_empty() && key_values.is_empty() {
+    if components.is_empty() {
         return None;
+    }
+    Some(AttributeSpans { components })
+}
+
+/// Parse the content inside the attribute braces into owned strings. Thin
+/// wrapper over [`attribute_content_spans`] so detection and emission share one
+/// walk.
+pub fn parse_attribute_content(content: &str) -> Option<AttributeBlock> {
+    let spans = attribute_content_spans(content)?;
+    let mut identifier = None;
+    let mut classes = Vec::new();
+    let mut key_values = Vec::new();
+
+    for comp in &spans.components {
+        match comp {
+            AttrComponent::Id(r) => {
+                // Range includes '#'; the scanner guarantees a non-empty tail.
+                identifier = Some(content[r.start + 1..r.end].to_string());
+            }
+            AttrComponent::Class(r) => {
+                let raw = &content[r.clone()];
+                // `.class` → `class`; `=format` keeps its `=` prefix.
+                match raw.strip_prefix('.') {
+                    Some(class) => classes.push(class.to_string()),
+                    None => classes.push(raw.to_string()),
+                }
+            }
+            AttrComponent::KeyValue { key, value, .. } => {
+                key_values.push((
+                    content[key.clone()].to_string(),
+                    attr_value_string(&content[value.clone()]),
+                ));
+            }
+        }
     }
 
     Some(AttributeBlock {
@@ -360,49 +421,104 @@ pub fn parse_html_attribute_list(attrs_text: &str) -> Option<AttributeBlock> {
     })
 }
 
-/// Emit attribute block as AST nodes
-pub fn emit_attributes(builder: &mut GreenNodeBuilder, attrs: &AttributeBlock) {
+/// Emit a Pandoc `{...}` ATTRIBUTE node by STRUCTURING the raw source slice
+/// into ATTR_* children that wrap the original bytes (no synthesis). Markers
+/// and quotes stay inside their tokens; whitespace/newlines between components,
+/// and any bytes the scanner skips (duplicate `#id`, malformed tokens), become
+/// standalone WHITESPACE/NEWLINE/TEXT tokens — so `node.text()` is exactly the
+/// source slice. Non-`{...}`-shaped or unrecognized input (MMD `[#id]` header
+/// brackets, raw-inline `{=format}`, empty `{}`) falls back to a single opaque
+/// ATTRIBUTE token, preserving the prior shape.
+pub fn emit_attribute_node(builder: &mut GreenNodeBuilder, raw_attr_text: &str) {
     builder.start_node(SyntaxKind::ATTRIBUTE.into());
 
-    // Build the attribute string to emit
-    let mut attr_str = String::from("{");
+    let body = raw_attr_text
+        .strip_prefix('{')
+        .and_then(|s| s.strip_suffix('}'));
+    let spans = body.and_then(attribute_content_spans);
 
-    if let Some(ref id) = attrs.identifier {
-        attr_str.push('#');
-        attr_str.push_str(id);
+    match (body, spans) {
+        (Some(body), Some(spans)) => {
+            builder.token(SyntaxKind::TEXT.into(), "{");
+            let mut cursor = 0usize;
+            for comp in &spans.components {
+                let (start, end) = match comp {
+                    AttrComponent::Id(r) | AttrComponent::Class(r) => (r.start, r.end),
+                    AttrComponent::KeyValue { key, value, .. } => (key.start, value.end),
+                };
+                emit_attribute_gap(builder, &body[cursor..start]);
+                match comp {
+                    AttrComponent::Id(r) => {
+                        builder.token(SyntaxKind::ATTR_ID.into(), &body[r.clone()]);
+                    }
+                    AttrComponent::Class(r) => {
+                        builder.token(SyntaxKind::ATTR_CLASS.into(), &body[r.clone()]);
+                    }
+                    AttrComponent::KeyValue { key, eq, value } => {
+                        builder.start_node(SyntaxKind::ATTR_KEY_VALUE.into());
+                        builder.token(SyntaxKind::ATTR_KEY.into(), &body[key.clone()]);
+                        builder.token(SyntaxKind::TEXT.into(), &body[*eq..*eq + 1]);
+                        if value.end > value.start {
+                            builder.token(SyntaxKind::ATTR_VALUE.into(), &body[value.clone()]);
+                        }
+                        builder.finish_node();
+                    }
+                }
+                cursor = end;
+            }
+            emit_attribute_gap(builder, &body[cursor..]);
+            builder.token(SyntaxKind::TEXT.into(), "}");
+        }
+        _ => {
+            // Opaque fallback: keep the whole slice as one ATTRIBUTE token.
+            builder.token(SyntaxKind::ATTRIBUTE.into(), raw_attr_text);
+        }
     }
 
-    for class in &attrs.classes {
-        if attr_str.len() > 1 {
-            attr_str.push(' ');
-        }
-        // Special case: if class starts with =, it's a raw format specifier
-        // Emit as {=format} not {.=format}
-        if class.starts_with('=') {
-            attr_str.push_str(class);
-        } else {
-            attr_str.push('.');
-            attr_str.push_str(class);
-        }
-    }
-
-    for (key, value) in &attrs.key_values {
-        if attr_str.len() > 1 {
-            attr_str.push(' ');
-        }
-        attr_str.push_str(key);
-        attr_str.push('=');
-
-        // Always quote attribute values to match Pandoc's behavior
-        attr_str.push('"');
-        attr_str.push_str(&value.replace('"', "\\\""));
-        attr_str.push('"');
-    }
-
-    attr_str.push('}');
-
-    builder.token(SyntaxKind::ATTRIBUTE.into(), &attr_str);
     builder.finish_node();
+}
+
+/// Emit the bytes between/around structured attribute components, splitting on
+/// newline boundaries: `\n`/`\r\n`/`\r` → NEWLINE, other whitespace runs →
+/// WHITESPACE, non-whitespace runs → TEXT. Every byte is preserved.
+fn emit_attribute_gap(builder: &mut GreenNodeBuilder, gap: &str) {
+    let bytes = gap.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\n' => {
+                builder.token(SyntaxKind::NEWLINE.into(), "\n");
+                i += 1;
+            }
+            b'\r' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                    builder.token(SyntaxKind::NEWLINE.into(), "\r\n");
+                    i += 2;
+                } else {
+                    builder.token(SyntaxKind::NEWLINE.into(), "\r");
+                    i += 1;
+                }
+            }
+            b if b.is_ascii_whitespace() => {
+                let start = i;
+                while i < bytes.len()
+                    && bytes[i].is_ascii_whitespace()
+                    && bytes[i] != b'\n'
+                    && bytes[i] != b'\r'
+                {
+                    i += 1;
+                }
+                builder.token(SyntaxKind::WHITESPACE.into(), &gap[start..i]);
+            }
+            _ => {
+                let start = i;
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                builder.token(SyntaxKind::TEXT.into(), &gap[start..i]);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -571,5 +687,69 @@ mod tests {
         assert!(result.is_some());
         let (_, before) = result.unwrap();
         assert_eq!(before, "Heading");
+    }
+
+    /// Regression: the inline-code attribute path used to reconstruct a
+    /// normalized `{...}` string (reordering id-first, force-quoting values),
+    /// which inflated the CST past the input and broke losslessness. The
+    /// structured emitter must wrap the original bytes verbatim.
+    #[test]
+    fn inline_code_attribute_is_lossless() {
+        let input = "`code`{.r #x key=v}\n";
+        let tree = crate::parse(input, None);
+        assert_eq!(tree.text().to_string(), input);
+    }
+
+    fn structured_attr(raw: &str) -> crate::syntax::SyntaxNode {
+        let mut builder = GreenNodeBuilder::new();
+        emit_attribute_node(&mut builder, raw);
+        crate::syntax::SyntaxNode::new_root(builder.finish())
+    }
+
+    #[test]
+    fn emit_attribute_node_is_lossless_over_shapes() {
+        // Interior whitespace, duplicate id, malformed/empty bodies, mixed
+        // quotes, and `=format` must all round-trip byte-for-byte.
+        for raw in [
+            "{#id}",
+            "{.a .b}",
+            "{key=\"v w\"}",
+            "{ #id  .c }",
+            "{#id1 #id2}",
+            "{key}",
+            "{=html}",
+            "{#id .a key=v key2='x'}",
+            "{key=}",
+            "{}",
+            "{   }",
+        ] {
+            let node = structured_attr(raw);
+            assert_eq!(node.text().to_string(), raw, "lossless emit for {raw:?}");
+            assert_eq!(node.kind(), SyntaxKind::ATTRIBUTE);
+        }
+    }
+
+    #[test]
+    fn emit_attribute_node_structures_children() {
+        let node = structured_attr("{#x .a .b k=v}");
+        let kinds: Vec<_> = node.children_with_tokens().map(|c| c.kind()).collect();
+        assert_eq!(
+            kinds.iter().filter(|k| **k == SyntaxKind::ATTR_ID).count(),
+            1
+        );
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| **k == SyntaxKind::ATTR_CLASS)
+                .count(),
+            2
+        );
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| **k == SyntaxKind::ATTR_KEY_VALUE)
+                .count(),
+            1
+        );
     }
 }

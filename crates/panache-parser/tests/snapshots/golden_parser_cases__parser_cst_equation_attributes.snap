@@ -21,7 +21,9 @@ DOCUMENT@0..591
       DISPLAY_MATH_MARKER@376..378 "$$"
     WHITESPACE@378..379 " "
     ATTRIBUTE@379..398
-      ATTRIBUTE@379..398 "{#eq-black-scholes}"
+      TEXT@379..380 "{"
+      ATTR_ID@380..397 "#eq-black-scholes"
+      TEXT@397..398 "}"
     NEWLINE@398..399 "\n"
   BLANK_LINE@399..400
     BLANK_LINE@399..400 "\n"
@@ -43,7 +45,9 @@ DOCUMENT@0..591
       DISPLAY_MATH_MARKER@521..523 "$$"
     WHITESPACE@523..524 " "
     ATTRIBUTE@524..537
-      ATTRIBUTE@524..537 "{#eq-problem}"
+      TEXT@524..525 "{"
+      ATTR_ID@525..536 "#eq-problem"
+      TEXT@536..537 "}"
     NEWLINE@537..538 "\n"
     TEXT@538..590 "Let's hope the attrib ..."
     NEWLINE@590..591 "\n"

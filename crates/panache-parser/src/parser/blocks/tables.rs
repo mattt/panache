@@ -5,7 +5,9 @@ use crate::syntax::SyntaxKind;
 use rowan::GreenNodeBuilder;
 use unicode_width::UnicodeWidthChar;
 
-use crate::parser::utils::attributes::try_parse_trailing_attributes_with_pos;
+use crate::parser::utils::attributes::{
+    emit_attribute_node, try_parse_trailing_attributes_with_pos,
+};
 use crate::parser::utils::helpers::{emit_line_tokens, strip_newline};
 use crate::parser::utils::inline_emission;
 
@@ -449,9 +451,7 @@ fn emit_caption_line_text(
         if !space.is_empty() {
             builder.token(SyntaxKind::WHITESPACE.into(), space);
         }
-        builder.start_node(SyntaxKind::ATTRIBUTE.into());
-        builder.token(SyntaxKind::ATTRIBUTE.into(), raw_attrs);
-        builder.finish_node();
+        emit_attribute_node(builder, raw_attrs);
         if !trailing_ws.is_empty() {
             builder.token(SyntaxKind::WHITESPACE.into(), trailing_ws);
         }
