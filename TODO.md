@@ -554,15 +554,26 @@ intentionally excluded.
             `AttributeNode` gained `classes()` / `key_values()` and reads
             structured children (precise `id_value_range` from the `ATTR_ID`
             token); the projector reads via `attr_from_attribute_node`.
+      - [x] **Attributes --- `DIV_INFO`.** Fenced-div `::: {#id .class key=val}`
+            bodies now emit `ATTR_*` children via a shared
+            `emit_attribute_node_with_kinds` (factored out of
+            `emit_attribute_node`; `emit_div_info_node` keeps bare-word
+            shorthand and malformed/empty bodies as one opaque `TEXT` token).
+            The projector reads the CST via `attr_from_attribute_node` (gated by
+            the new `attr_node_is_structured`), falling back to `parse_div_info`
+            for the bare-word case. `AttributeNode` already cast `DIV_INFO`, so
+            it now reads structured children. Zero formatter churn (the
+            formatter only reads `info_text()`, byte-identical after
+            restructuring).
       - [ ] **Attributes --- remaining node kinds.** Apply the same structuring
             to the other attribute-bearing nodes so `parse_attr_block` /
-            `parse_html_attrs` can finally be deleted: `DIV_INFO` (fenced divs),
-            `SPAN_ATTRIBUTES` (bracketed spans), `CODE_INFO` (code-block info
-            strings, language-first semantics) all still feed
-            `parse_attr_block`; `HTML_ATTRS` (HTML `<div>`/`<span>`, distinct
-            `class=""`/`id=""` syntax) feeds `parse_html_attrs`; and raw-inline
-            `{=format}` still synthesizes its token (`raw_inline.rs`) rather
-            than wrapping the source slice. Touch one node kind at a time.
+            `parse_html_attrs` can finally be deleted: `SPAN_ATTRIBUTES`
+            (bracketed spans) and `CODE_INFO` (code-block info strings,
+            language-first semantics) still feed `parse_attr_block`;
+            `HTML_ATTRS` (HTML `<div>`/`<span>`, distinct `class=""`/`id=""`
+            syntax) feeds `parse_html_attrs`; and raw-inline `{=format}` still
+            synthesizes its token (`raw_inline.rs`) rather than wrapping the
+            source slice. Touch one node kind at a time.
       - [ ] **HTML opaque-block split.** Continue the HTML lift (Phase 6): lift
             the remaining *opaque* HTML splitting (comments, PI, verbatim, void
             / unmatched tags) into the parser so `split_html_block_by_tags` and
