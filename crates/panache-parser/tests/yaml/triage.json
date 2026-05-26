@@ -540,12 +540,6 @@
       "tree": true
     },
     {
-      "case_id": "4FJ6",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
       "case_id": "565N",
       "diagnostic_codes": [],
       "event_parity": false,
@@ -694,12 +688,6 @@
       "tree": true
     },
     {
-      "case_id": "SBG9",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
       "case_id": "SKE5",
       "diagnostic_codes": [
         "YAML_PARSE_UNEXPECTED_DEDENT"
@@ -748,6 +736,7 @@
     "3UYS",
     "4ABK",
     "4CQQ",
+    "4FJ6",
     "4GC6",
     "4Q9F",
     "4QFQ",
@@ -926,6 +915,7 @@
     "S4T7",
     "S7BG",
     "S9E8",
+    "SBG9",
     "SSW6",
     "SYW4",
     "T26H",
@@ -962,8 +952,8 @@
   "summary": {
     "error_contract_ok_count": 53,
     "fails_needs_error_path_count": 25,
-    "fails_needs_feature_count": 28,
-    "passes_now_count": 227,
+    "fails_needs_feature_count": 26,
+    "passes_now_count": 229,
     "total_cases": 352
   }
 }

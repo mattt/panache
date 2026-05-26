@@ -1494,6 +1494,12 @@ fn project_flow_map_entries(flow_map: &SyntaxNode, handles: &TagHandles, out: &m
     // (when we hit a `,` or `}` before a matching empty-key entry).
     let mut pending = String::new();
     let mut pending_has_content = false;
+    // A flow-sequence/flow-map node sitting *between* entries is an
+    // orphan collection key: `{[d, e]: f}` lands `[d, e]` as a sibling
+    // node, then a separate empty-key entry carries the `:` and value
+    // (SBG9). Hold it until the following entry so we project it as
+    // that entry's key instead of dropping it on the `_ => {}` arm.
+    let mut pending_key_collection: Option<SyntaxNode> = None;
     for child in flow_map.children_with_tokens() {
         match child {
             rowan::NodeOrToken::Token(tok) => match tok.kind() {
@@ -1525,22 +1531,50 @@ fn project_flow_map_entries(flow_map: &SyntaxNode, handles: &TagHandles, out: &m
                 }
                 _ => {}
             },
-            rowan::NodeOrToken::Node(entry) if entry.kind() == SyntaxKind::YAML_FLOW_MAP_ENTRY => {
-                project_flow_map_entry(
-                    &entry,
-                    if pending_has_content {
-                        Some(pending.as_str())
+            rowan::NodeOrToken::Node(node) if node.kind() == SyntaxKind::YAML_FLOW_MAP_ENTRY => {
+                if let Some(key_collection) = pending_key_collection.take() {
+                    // The orphan collection is this entry's key; the
+                    // entry itself contributes only the `:` and value.
+                    project_flow_collection_node(&key_collection, handles, out);
+                    if let Some(value_node) = node
+                        .children()
+                        .find(|n| n.kind() == SyntaxKind::YAML_FLOW_MAP_VALUE)
+                    {
+                        project_flow_map_value(&value_node, handles, out);
                     } else {
-                        None
-                    },
-                    handles,
-                    out,
-                );
+                        out.push("=VAL :".to_string());
+                    }
+                } else {
+                    project_flow_map_entry(
+                        &node,
+                        if pending_has_content {
+                            Some(pending.as_str())
+                        } else {
+                            None
+                        },
+                        handles,
+                        out,
+                    );
+                }
                 pending.clear();
                 pending_has_content = false;
             }
+            rowan::NodeOrToken::Node(node)
+                if matches!(
+                    node.kind(),
+                    SyntaxKind::YAML_FLOW_SEQUENCE | SyntaxKind::YAML_FLOW_MAP
+                ) =>
+            {
+                pending_key_collection = Some(node);
+            }
             _ => {}
         }
+    }
+    // A trailing orphan collection with no following entry is a key
+    // with an implicit empty value: `{[a, b]}` ≡ `{[a, b]: ~}`.
+    if let Some(key_collection) = pending_key_collection.take() {
+        project_flow_collection_node(&key_collection, handles, out);
+        out.push("=VAL :".to_string());
     }
     if pending_has_content {
         flush_pending_orphan(&pending, handles, out);
@@ -1721,6 +1755,72 @@ fn project_flow_map_value(value_node: &SyntaxNode, handles: &TagHandles, out: &m
     out.push(flow_scalar_event(&raw_value, handles));
 }
 
+/// Emit the events for a flow collection node (`+SEQ [] ... -SEQ` or
+/// `+MAP {} ... -MAP`). Shared by flow-map orphan-key projection and
+/// flow-sequence single-pair-map projection so a collection sitting in
+/// key position is projected structurally, not slurped as scalar text.
+fn project_flow_collection_node(node: &SyntaxNode, handles: &TagHandles, out: &mut Vec<String>) {
+    match node.kind() {
+        SyntaxKind::YAML_FLOW_SEQUENCE => {
+            out.push("+SEQ []".to_string());
+            project_flow_sequence_items_cst(node, handles, out);
+            out.push("-SEQ".to_string());
+        }
+        SyntaxKind::YAML_FLOW_MAP => {
+            out.push("+MAP {}".to_string());
+            project_flow_map_entries(node, handles, out);
+            out.push("-MAP".to_string());
+        }
+        _ => {}
+    }
+}
+
+/// Project the value side of a flow-sequence single-pair map item:
+/// everything after the item's first direct-child colon. A trailing
+/// flow collection projects structurally; otherwise the scalar text
+/// (possibly empty → `=VAL :`) is emitted inline.
+fn project_flow_seq_item_pair_value(
+    item: &SyntaxNode,
+    handles: &TagHandles,
+    out: &mut Vec<String>,
+) {
+    let mut seen_colon = false;
+    let mut value_text = String::new();
+    for el in item.children_with_tokens() {
+        match el {
+            rowan::NodeOrToken::Token(tok) => {
+                if !seen_colon {
+                    if tok.kind() == SyntaxKind::YAML_COLON {
+                        seen_colon = true;
+                    }
+                    continue;
+                }
+                if matches!(
+                    tok.kind(),
+                    SyntaxKind::YAML_SCALAR
+                        | SyntaxKind::YAML_KEY
+                        | SyntaxKind::WHITESPACE
+                        | SyntaxKind::NEWLINE
+                ) {
+                    value_text.push_str(tok.text());
+                }
+            }
+            rowan::NodeOrToken::Node(node)
+                if seen_colon
+                    && matches!(
+                        node.kind(),
+                        SyntaxKind::YAML_FLOW_SEQUENCE | SyntaxKind::YAML_FLOW_MAP
+                    ) =>
+            {
+                project_flow_collection_node(&node, handles, out);
+                return;
+            }
+            _ => {}
+        }
+    }
+    project_inline_scalar(&value_text, handles, out);
+}
+
 /// CST-walking variant of flow-sequence projection. Each
 /// `YAML_FLOW_SEQUENCE_ITEM` may contain a nested `YAML_FLOW_SEQUENCE` /
 /// `YAML_FLOW_MAP`; if neither is present we fall back to the text-based
@@ -1734,6 +1834,28 @@ fn project_flow_sequence_items_cst(
         .children()
         .filter(|n| n.kind() == SyntaxKind::YAML_FLOW_SEQUENCE_ITEM)
     {
+        // A flow-sequence item shaped `<collection>: <value>` is an
+        // implicit single-pair map keyed by the collection
+        // (`[ [[b,c]]: d ]`, `[ {JSON: like}: adjacent ]`). Detect a
+        // leading collection node followed by a direct-child colon and
+        // wrap it in `+MAP {} ... -MAP`; scalar-keyed pairs keep the
+        // proven text path (`flow_kv_split`) below.
+        if let Some(key_collection) = item.children().next().filter(|n| {
+            matches!(
+                n.kind(),
+                SyntaxKind::YAML_FLOW_SEQUENCE | SyntaxKind::YAML_FLOW_MAP
+            )
+        }) && item
+            .children_with_tokens()
+            .filter_map(|el| el.into_token())
+            .any(|tok| tok.kind() == SyntaxKind::YAML_COLON)
+        {
+            out.push("+MAP {}".to_string());
+            project_flow_collection_node(&key_collection, handles, out);
+            project_flow_seq_item_pair_value(&item, handles, out);
+            out.push("-MAP".to_string());
+            continue;
+        }
         if let Some(nested_seq) = item
             .children()
             .find(|n| n.kind() == SyntaxKind::YAML_FLOW_SEQUENCE)

@@ -493,3 +493,10 @@ V9D5
 # sequences (plus a `&node` block-seq value and a folded `>` block scalar).
 RZP5
 XW4D
+# A flow collection used as a key projects structurally instead of being
+# slurped as scalar text. Two shapes: a stray flow-seq sibling inside a flow
+# map that keys the next empty-key entry (SBG9: `{a: [b, c], [d, e]: f}`), and
+# a flow-seq item shaped `<collection>: value` that is an implicit single-pair
+# map keyed by the collection (4FJ6: nested `[[b,c]]: d` and `[ a, [...]]: 23`).
+SBG9
+4FJ6
