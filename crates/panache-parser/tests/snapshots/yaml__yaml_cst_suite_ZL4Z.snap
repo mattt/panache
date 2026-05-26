@@ -1,9 +1,10 @@
 ---
 source: crates/panache-parser/tests/yaml.rs
+assertion_line: 283
 expression: snapshot
 ---
 case_id: ZL4Z
 input: "---\na: 'b': c\n"
 diagnostics:
-YAML_LEX_ERROR:invalid plain scalar containing mapping indicator sequence@6..13
+YAML_PARSE_INVALID_KEY_TOKEN:mapping values are not allowed in this context@7..10
 cst:

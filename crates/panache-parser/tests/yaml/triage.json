@@ -372,6 +372,20 @@
       "event_parity": false
     },
     {
+      "case_id": "ZCZ6",
+      "diagnostic_codes": [
+        "YAML_PARSE_INVALID_KEY_TOKEN"
+      ],
+      "event_parity": false
+    },
+    {
+      "case_id": "ZL4Z",
+      "diagnostic_codes": [
+        "YAML_PARSE_INVALID_KEY_TOKEN"
+      ],
+      "event_parity": false
+    },
+    {
       "case_id": "ZVH3",
       "diagnostic_codes": [
         "YAML_PARSE_UNEXPECTED_DEDENT"
@@ -512,18 +526,6 @@
       "diagnostic_codes": [],
       "event_parity": false,
       "tree": true
-    },
-    {
-      "case_id": "ZCZ6",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "ZL4Z",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
     }
   ],
   "fails_needs_feature": [
@@ -537,9 +539,11 @@
     },
     {
       "case_id": "2SXE",
-      "diagnostic_codes": [],
+      "diagnostic_codes": [
+        "YAML_PARSE_INVALID_KEY_TOKEN"
+      ],
       "event_parity": false,
-      "tree": true
+      "tree": false
     },
     {
       "case_id": "57H4",
@@ -937,8 +941,8 @@
     "ZWK4"
   ],
   "summary": {
-    "error_contract_ok_count": 55,
-    "fails_needs_error_path_count": 23,
+    "error_contract_ok_count": 57,
+    "fails_needs_error_path_count": 21,
     "fails_needs_feature_count": 23,
     "passes_now_count": 232,
     "total_cases": 352

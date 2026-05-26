@@ -525,3 +525,10 @@ SF5V
 # argument (`%YAML 1.2 foo`) — rejected with YAML_PARSE_MALFORMED_YAML_DIRECTIVE.
 # A trailing comment after the version stays valid.
 H7TQ
+# Error-contract: inline nested mapping in a block-map value — a value scalar
+# followed by a second `: ` value-indicator (`a: b: c: d`, `a: 'b': c`).
+# check_value_level_scalar_then_colon_map now flags single-line content
+# scalars (not just multi-line implicit keys), exempting pure node-property
+# scalars (W5VH/26DV); rejected with YAML_PARSE_INVALID_KEY_TOKEN.
+ZCZ6
+ZL4Z

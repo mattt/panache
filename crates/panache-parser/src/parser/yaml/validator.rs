@@ -1210,7 +1210,7 @@ fn check_block_scalar_header(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
 /// distinguishes the two by checking whether a `YAML_DOCUMENT_START`
 /// token appears as a direct child of the same document.
 fn check_doc_level_bare_scalar_then_colon_map(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
-    if let Some(diag) = check_value_level_multiline_scalar_then_colon_map(tree) {
+    if let Some(diag) = check_value_level_scalar_then_colon_map(tree) {
         return Some(diag);
     }
     for doc in tree
@@ -1264,13 +1264,20 @@ fn check_doc_level_bare_scalar_then_colon_map(tree: &SyntaxNode) -> Option<YamlD
     None
 }
 
-/// HU3P sub-pattern: a `YAML_BLOCK_MAP_VALUE` containing a
-/// multi-line `YAML_SCALAR` immediately followed by a `YAML_BLOCK_MAP`
-/// whose first entry's key is colon-only. The compact-mapping form
-/// `a: <scalar>: <value>` (W5VH/26DV) is allowed for SINGLE-line
-/// scalars; YAML 1.2 §7.4 forbids implicit keys spanning lines, so a
-/// multi-line scalar in this position is malformed.
-fn check_value_level_multiline_scalar_then_colon_map(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
+/// A `YAML_BLOCK_MAP_VALUE` containing a `YAML_SCALAR` immediately
+/// followed by a `YAML_BLOCK_MAP` whose first entry's key is
+/// colon-only. Two malformed shapes share this CST signature:
+/// - Single-line inline nested mapping: `a: b: c` (ZCZ6) and
+///   `a: 'b': c` (ZL4Z) — the value scalar is followed by a second
+///   `: ` value-indicator on the same line, which YAML 1.2 forbids.
+/// - Multi-line implicit key: `key:\n  word1 word2\n  no: key`
+///   (HU3P) — §7.4 forbids an implicit key spanning lines.
+///
+/// Both are exempt when the value scalar is purely a node property
+/// (anchor `&`, tag `!`, or alias `*`): the trailing `:` then
+/// annotates an anchored/tagged value or its nested map, the valid
+/// compact-mapping shapes W5VH and 26DV.
+fn check_value_level_scalar_then_colon_map(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
     for value in tree
         .descendants()
         .filter(|n| n.kind() == SyntaxKind::YAML_BLOCK_MAP_VALUE)
@@ -1287,13 +1294,18 @@ fn check_value_level_multiline_scalar_then_colon_map(tree: &SyntaxNode) -> Optio
                     if n.kind() == SyntaxKind::YAML_BLOCK_MAP
                         && let Some(scalar) = last_scalar.take()
                         && first_entry_has_colon_only_key(n)
-                        && scalar_text_spans_implicit_key_lines(scalar.text())
+                        && scalar_is_content_implicit_key(scalar.text())
                     {
+                        let message = if scalar.text().contains('\n') {
+                            "implicit key cannot span lines"
+                        } else {
+                            "mapping values are not allowed in this context"
+                        };
                         return Some(diag_at_range(
                             scalar.text_range().start().into(),
                             scalar.text_range().end().into(),
                             diagnostic_codes::PARSE_INVALID_KEY_TOKEN,
-                            "implicit key cannot span lines",
+                            message,
                         ));
                     }
                     last_scalar = None;
@@ -1304,34 +1316,28 @@ fn check_value_level_multiline_scalar_then_colon_map(tree: &SyntaxNode) -> Optio
     None
 }
 
-/// Distinguishes HU3P (`word1 word2\n  no` → flag) from 26DV
-/// (`&node3 \n  *alias1 ` → exempt). A multi-line scalar that
-/// precedes a colon-only inner block-map is a valid compact-mapping
-/// shape only when the leading line is a node property (anchor `&`
-/// or tag `!`) or alias (`*`) declaration with no other content.
-/// The actual implicit key then sits on the trailing line, which is
-/// a single line and meets the YAML 1.2 §7.4 contract.
-fn scalar_text_spans_implicit_key_lines(text: &str) -> bool {
-    if !text.contains('\n') {
-        return false;
-    }
-    let Some((first_line, _rest)) = text.split_once('\n') else {
-        return false;
-    };
-    let first = first_line.trim_end();
-    let mut head = first;
-    while let Some(token_end) = head.find(|c: char| c.is_whitespace()).or(Some(head.len())) {
+/// True when a value-level scalar that precedes a colon-only inner
+/// block-map carries real implicit-key content, i.e. its first line
+/// is not made up solely of node properties.
+///
+/// Flags HU3P (`word1 word2\n  no` → content), ZCZ6 (`b` → content),
+/// and ZL4Z (`'b'` → content). Exempts 26DV (`&node3\n  *alias1`)
+/// and W5VH (`&anchor:`), where the leading line is only an anchor
+/// `&`, tag `!`, or alias `*` declaration: the actual key/value then
+/// sits past the property and meets the YAML 1.2 §7.4 contract.
+fn scalar_is_content_implicit_key(text: &str) -> bool {
+    let first_line = text.split_once('\n').map_or(text, |(first, _)| first);
+    let mut head = first_line.trim();
+    while !head.is_empty() {
+        let token_end = head.find(char::is_whitespace).unwrap_or(head.len());
         let (tok, rest) = head.split_at(token_end);
         let is_property = tok.starts_with('&') || tok.starts_with('!') || tok.starts_with('*');
         if !is_property {
             return true;
         }
         head = rest.trim_start();
-        if head.is_empty() {
-            return false;
-        }
     }
-    true
+    false
 }
 
 /// True if `block_map`'s first `YAML_BLOCK_MAP_ENTRY` has a key
@@ -2084,6 +2090,44 @@ mod tests {
     fn nested_block_seq_in_seq_item_passes() {
         // `- - x` (nested sequence in single item) is well-formed.
         let input = "- - x\n  - y\n- z\n";
+        assert!(run(input).is_none());
+    }
+
+    // ---- Cluster J: inline nested mapping in a block-map value ----
+
+    #[test]
+    fn value_level_inline_nested_map_zcz6() {
+        // ZCZ6: `a: b: c: d` — the block-map value `b` is followed by a
+        // second `: ` value-indicator on the same line, forming an
+        // illegal inline nested mapping.
+        let input = "a: b: c: d\n";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(diag.code, diagnostic_codes::PARSE_INVALID_KEY_TOKEN);
+    }
+
+    #[test]
+    fn value_level_inline_nested_map_quoted_zl4z() {
+        // ZL4Z: `a: 'b': c` — a quoted block-map value followed by a `: `
+        // value-indicator is the same illegal inline nested mapping.
+        let input = "---\na: 'b': c\n";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(diag.code, diagnostic_codes::PARSE_INVALID_KEY_TOKEN);
+    }
+
+    #[test]
+    fn value_level_property_only_scalar_then_colon_passes_w5vh() {
+        // W5VH: `a: &anchor: scalar` — the value-level scalar is purely a
+        // node property (anchor), so the trailing `:` annotates an anchored
+        // value, not an inline nested mapping. Must stay accepted.
+        let input = "a: &anchor: scalar a\n";
+        assert!(run(input).is_none());
+    }
+
+    #[test]
+    fn value_level_colon_without_space_passes() {
+        // `a: b:c` — the inner colon is not followed by whitespace, so
+        // `b:c` is a single plain scalar value, not a nested mapping.
+        let input = "a: b:c\n";
         assert!(run(input).is_none());
     }
 
