@@ -540,3 +540,27 @@ ZL4Z
 # tag prefix shielding the token from the `starts_with('"')` check.
 NP9H
 Q8AD
+# Consecutive empty-key (null-key) block-map entries from a bare leading `:`
+# (`: a\n: b`, 2JQS). The scanner emits two bare `Value` tokens with no Key /
+# BlockEnd between them; parser_v2 used to absorb the second `:` into the first
+# entry's value (tripping a false UNEXPECTED_DEDENT in the validator). The Value
+# handler now closes the open block-map entry when a bare `:` arrives while
+# already in_value (guaranteed a peer at the map's column by the scanner's indent
+# machinery) and opens a fresh empty-key entry.
+2JQS
+# Same empty-key-entry fix, mixed with a regular entry and a quoted key whose
+# value is an indentless block sequence (`plain key: …\n: # Both empty\n"quoted
+# key":\n- entry`). Was tree:true but the `: # Both empty` line folded into the
+# previous value.
+S3PD
+# Same fix across a multi-document stream combining block empty-keys
+# (`: empty key`), flow-map empty keys (`{ key: value, : empty key }`, `{ : }`),
+# and comment-only empty-key/value docs. Flow empty-keys already worked (the `,`
+# closes the entry); the block-context docs were the ones tripping the false
+# UNEXPECTED_DEDENT.
+NKF9
+# Same fix unlocks an explicit-key entry (`? &a a\n: &b b`) followed by an
+# empty-key entry whose value is an alias (`: *a`). The alias/anchor events
+# (`=VAL &a :a`, `=ALI *a`) were already projected; the `: *a` line was the
+# piece getting absorbed into the previous value before the empty-key fix.
+6M2F

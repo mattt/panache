@@ -530,14 +530,6 @@
   ],
   "fails_needs_feature": [
     {
-      "case_id": "2JQS",
-      "diagnostic_codes": [
-        "YAML_PARSE_UNEXPECTED_DEDENT"
-      ],
-      "event_parity": false,
-      "tree": false
-    },
-    {
       "case_id": "2SXE",
       "diagnostic_codes": [
         "YAML_PARSE_INVALID_KEY_TOKEN"
@@ -565,14 +557,6 @@
       "case_id": "6BFJ",
       "diagnostic_codes": [
         "YAML_LEX_TRAILING_CONTENT_AFTER_DOCUMENT_START"
-      ],
-      "event_parity": false,
-      "tree": false
-    },
-    {
-      "case_id": "6M2F",
-      "diagnostic_codes": [
-        "YAML_PARSE_UNEXPECTED_DEDENT"
       ],
       "event_parity": false,
       "tree": false
@@ -640,21 +624,7 @@
       "tree": false
     },
     {
-      "case_id": "NKF9",
-      "diagnostic_codes": [
-        "YAML_PARSE_UNEXPECTED_DEDENT"
-      ],
-      "event_parity": false,
-      "tree": false
-    },
-    {
       "case_id": "Q9WF",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "S3PD",
       "diagnostic_codes": [],
       "event_parity": false,
       "tree": true
@@ -696,6 +666,7 @@
     "27NA",
     "2AUY",
     "2EBW",
+    "2JQS",
     "2LFX",
     "2XXW",
     "33X3",
@@ -741,6 +712,7 @@
     "6JWB",
     "6KGN",
     "6LVF",
+    "6M2F",
     "6PBE",
     "6SLA",
     "6VJK",
@@ -868,6 +840,7 @@
     "NB6Z",
     "NHX8",
     "NJ66",
+    "NKF9",
     "NP9H",
     "P2AD",
     "P76L",
@@ -888,6 +861,7 @@
     "RTP8",
     "RZP5",
     "RZT7",
+    "S3PD",
     "S4JQ",
     "S4T7",
     "S7BG",
@@ -929,8 +903,8 @@
   "summary": {
     "error_contract_ok_count": 57,
     "fails_needs_error_path_count": 21,
-    "fails_needs_feature_count": 21,
-    "passes_now_count": 234,
+    "fails_needs_feature_count": 17,
+    "passes_now_count": 238,
     "total_cases": 352
   }
 }

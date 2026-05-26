@@ -1,0 +1,10 @@
+---
+source: crates/panache-parser/tests/yaml.rs
+assertion_line: 250
+expression: snapshot
+---
+case_id: S3PD
+input: "plain key: in-line value\n: # Both empty\n\"quoted key\":\n- entry\n"
+has_error_contract: false
+parsed_mapping_tree: true
+diagnostics: []

@@ -200,7 +200,23 @@ pub fn parse_v2(input: &str) -> SyntaxNode {
                     }) => Some((true, entry_open, in_value)),
                     _ => None,
                 };
-                if let Some((is_flow, entry_open, in_value)) = map_state {
+                if let Some((is_flow, mut entry_open, mut in_value)) = map_state {
+                    // A bare `:` arriving while the current block-map
+                    // entry is already in its VALUE phase starts a NEW
+                    // entry whose key is empty (`: a\n: b`, 2JQS/S3PD) —
+                    // not a double-colon inside that value. The scanner's
+                    // indent machinery guarantees we only reach here for a
+                    // peer at the map's column (a deeper colon rolls a
+                    // fresh BlockMappingStart; a shallower one unwinds with
+                    // BlockEnd first), so close the current entry and fall
+                    // through to open the new one. Flow maps separate
+                    // entries with `,`, which already closes the entry, so
+                    // their in_value is false here — leave them alone.
+                    if !is_flow && entry_open && in_value {
+                        close_open_sub_wrapper(&mut builder, &mut block_stack);
+                        entry_open = false;
+                        in_value = false;
+                    }
                     // Empty-key shorthand: `:` arriving without a prior
                     // Key opens an ENTRY+KEY before consuming the colon.
                     if !entry_open {
@@ -856,6 +872,39 @@ mod tests {
             .children()
             .find(|n| n.kind() == SyntaxKind::YAML_BLOCK_MAP_VALUE)
             .expect("entry should have a YAML_BLOCK_MAP_VALUE child")
+    }
+
+    #[test]
+    fn consecutive_empty_key_colons_open_separate_entries() {
+        // `: a\n: b` is two block-map entries, each with an empty
+        // (null) key and a value (2JQS). The scanner emits two bare
+        // `Value` tokens with no Key/BlockEnd between them, so v2 must
+        // close the first entry when the second `:` arrives at the
+        // map's column rather than absorbing it into the first value.
+        let input = ": a\n: b\n";
+        let tree = parse_v2(input);
+        let doc = first_document(&tree);
+        let map = block_map_under(&doc).expect("YAML_BLOCK_MAP child");
+        let entries = block_map_entries(&map);
+        assert_eq!(entries.len(), 2, "expected two empty-key ENTRY nodes");
+        for (entry, scalar) in entries.iter().zip(["a", "b"]) {
+            let key = entry_key(entry);
+            // Empty key: the KEY holds only the `:` value indicator.
+            assert!(
+                !key.children_with_tokens().any(|el| el
+                    .as_token()
+                    .is_some_and(|t| t.kind() == SyntaxKind::YAML_SCALAR)),
+                "empty key should carry no scalar, got {key:?}",
+            );
+            let value = entry_value(entry);
+            assert!(
+                value.children_with_tokens().any(|el| el
+                    .as_token()
+                    .is_some_and(|t| t.kind() == SyntaxKind::YAML_SCALAR && t.text() == scalar)),
+                "value should be {scalar:?}, got {value:?}",
+            );
+        }
+        assert_eq!(tree.text().to_string(), input);
     }
 
     #[test]
