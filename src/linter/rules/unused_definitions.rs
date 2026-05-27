@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::linter::diagnostics::{Diagnostic, Location};
 use crate::linter::rules::Rule;
 use crate::syntax::{
-    AstNode, FootnoteReference, Link, SyntaxKind, SyntaxNode, UnresolvedReference,
+    AstNode, FootnoteReference, ImageLink, Link, SyntaxKind, SyntaxNode, UnresolvedReference,
 };
 use crate::utils::normalize_label;
 
@@ -94,6 +94,39 @@ fn collect_usage_labels(tree: &SyntaxNode) -> UsageLabels {
         })
         .filter(|label| !label.is_empty())
         .collect();
+
+    // Reference-style images (`![alt][label]`, collapsed `![label][]`,
+    // shortcut `![label]`) resolve to `IMAGE_LINK` rather than `LINK`,
+    // so they count as usages of the label they reference too. Mirror
+    // the `Link` logic: skip inline images (they carry a destination,
+    // not a label) and fall back to the alt text for collapsed/shortcut
+    // shapes whose `LINK_REF` is empty or absent.
+    reference_labels.extend(
+        tree.descendants()
+            .filter_map(ImageLink::cast)
+            .filter_map(|image| {
+                if image
+                    .syntax()
+                    .ancestors()
+                    .any(|ancestor| ancestor.kind() == SyntaxKind::REFERENCE_DEFINITION)
+                {
+                    return None;
+                }
+                if image.dest().is_some() {
+                    return None;
+                }
+                if let Some(link_ref) = image.reference() {
+                    let label = normalize_label(&link_ref.label());
+                    if !label.is_empty() {
+                        return Some(label);
+                    }
+                }
+                image
+                    .alt()
+                    .map(|alt| normalize_label(&alt.text()))
+                    .filter(|label| !label.is_empty())
+            }),
+    );
 
     // Bracket-shape patterns whose label didn't resolve as a refdef
     // still count as a usage of the label they reference — so a
@@ -194,6 +227,45 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "unused-footnote-id");
         assert!(diagnostics[0].message.contains("[^2]"));
+    }
+
+    #[test]
+    fn accepts_definition_used_by_full_reference_image() {
+        let input = "![This is an image][image-path]\n\n[image-path]: https://example.com/i.png\n";
+        let diagnostics = parse_and_lint(input);
+        assert!(
+            diagnostics.is_empty(),
+            "full reference image should count as a usage: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_definition_used_by_collapsed_reference_image() {
+        let input = "![image-path][]\n\n[image-path]: https://example.com/i.png\n";
+        let diagnostics = parse_and_lint(input);
+        assert!(
+            diagnostics.is_empty(),
+            "collapsed reference image should count as a usage: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_definition_used_by_shortcut_reference_image() {
+        let input = "![image-path]\n\n[image-path]: https://example.com/i.png\n";
+        let diagnostics = parse_and_lint(input);
+        assert!(
+            diagnostics.is_empty(),
+            "shortcut reference image should count as a usage: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn still_reports_unused_definition_with_only_inline_image() {
+        let input = "![alt](https://example.com/i.png)\n\n[unused]: https://example.org\n";
+        let diagnostics = parse_and_lint(input);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "unused-definition-label");
+        assert!(diagnostics[0].message.contains("[unused]"));
     }
 
     #[test]
