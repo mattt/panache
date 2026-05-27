@@ -149,6 +149,9 @@ pub(crate) fn validate_yaml(input: &str) -> Option<YamlDiagnostic> {
     if let Some(diag) = check_directives(input, &tokens) {
         return Some(diag);
     }
+    if let Some(diag) = check_unterminated_quoted(input) {
+        return Some(diag);
+    }
     let tree = parse_v2(input);
     if let Some(diag) = check_trailing_content(&tree) {
         return Some(diag);
@@ -171,6 +174,9 @@ pub(crate) fn validate_yaml(input: &str) -> Option<YamlDiagnostic> {
     if let Some(diag) = check_block_scalar_header(&tree) {
         return Some(diag);
     }
+    if let Some(diag) = check_block_scalar_leading_indent(&tree) {
+        return Some(diag);
+    }
     if let Some(diag) = check_doc_level_bare_scalar_then_colon_map(&tree) {
         return Some(diag);
     }
@@ -190,6 +196,28 @@ fn collect_tokens(input: &str) -> Vec<Token> {
         tokens.push(tok);
     }
     tokens
+}
+
+/// Lex-level cluster — unterminated quoted scalar.
+///
+/// The streaming scanner already detects a `"`/`'` scalar that never
+/// reaches its closing quote: both at EOF (`key: "missing close`) and
+/// when a `---`/`...` document marker at column 0 aborts the still-open
+/// scalar (`---\n"\n---\n"`, `---\n'\n...\n'`). It records the failure
+/// on its diagnostic channel, but `validate_yaml` otherwise consumes
+/// only the token stream, so this lex diagnostic was dropped on the
+/// floor. Surface it here so the document is rejected rather than
+/// parsed with a silently-truncated scalar.
+///
+/// Covers fixtures CQ3W (EOF) and 5TRB / RXY3 (document-marker abort).
+fn check_unterminated_quoted(input: &str) -> Option<YamlDiagnostic> {
+    let mut scanner = Scanner::new(input);
+    while scanner.next_token().is_some() {}
+    scanner
+        .diagnostics()
+        .iter()
+        .find(|d| d.code == diagnostic_codes::LEX_UNTERMINATED_QUOTED_SCALAR)
+        .cloned()
 }
 
 /// Cluster F — directive ordering and lone-directive checks.
@@ -1215,6 +1243,103 @@ fn check_block_scalar_header(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
     None
 }
 
+/// §8.1.1.1 — block-scalar leading empty line over-indented.
+///
+/// For a block scalar with *auto-detected* indentation (no explicit
+/// indent-indicator digit in the header), the content indentation `m`
+/// is the leading-space count of the first non-empty body line. The
+/// spec forbids any *leading* empty line — one appearing before that
+/// first non-empty line — from containing more spaces than `m`; such a
+/// line would be more indented than the content it precedes, leaving
+/// the auto-detected indentation ambiguous.
+///
+/// Block scalars are captured as a single `>`/`|`-prefixed
+/// `YAML_SCALAR` token (header + body) whose body lines we walk
+/// directly. An explicit indent indicator skips the check (the
+/// indentation is then fixed, not detected). Tab-bearing lines are
+/// handled conservatively: a tab in the first non-empty line bails out
+/// (other checks own tab errors), and whitespace-only tab lines are
+/// skipped rather than space-compared.
+///
+/// Covers fixtures 5LLU, S98Z, W9L4.
+fn check_block_scalar_leading_indent(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
+    for token in tree
+        .descendants_with_tokens()
+        .filter_map(|el| el.into_token())
+        .filter(|t| t.kind() == SyntaxKind::YAML_SCALAR)
+    {
+        let text = token.text();
+        if !text.starts_with('>') && !text.starts_with('|') {
+            continue;
+        }
+        let header_end = text.find('\n').unwrap_or(text.len());
+        // Skip indicator + chomping/indent characters; a digit among
+        // them is an explicit indent indicator, which disables the
+        // auto-detection rule this check enforces.
+        let bytes = text.as_bytes();
+        let mut i = 1usize;
+        let mut explicit_indent = false;
+        while i < header_end && (bytes[i] == b'+' || bytes[i] == b'-' || bytes[i].is_ascii_digit())
+        {
+            explicit_indent |= bytes[i].is_ascii_digit();
+            i += 1;
+        }
+        if explicit_indent {
+            continue;
+        }
+
+        let scalar_start: usize = token.text_range().start().into();
+        // Leading blank lines, as (leading-space count, byte offset in `text`).
+        let mut leading_blanks: Vec<(usize, usize)> = Vec::new();
+        let mut cursor = header_end + 1; // first byte after the header's newline
+        while cursor <= text.len() {
+            let line_end = text[cursor..]
+                .find('\n')
+                .map(|rel| cursor + rel)
+                .unwrap_or(text.len());
+            let line = &text[cursor..line_end];
+
+            if line.bytes().any(|b| b == b'\t') {
+                if line.trim_matches([' ', '\t']).is_empty() {
+                    // Whitespace-only line with a tab: not space-comparable.
+                    if line_end >= text.len() {
+                        break;
+                    }
+                    cursor = line_end + 1;
+                    continue;
+                }
+                // First non-empty line carries a tab — leave it to the
+                // tab-indent / block-indent checks.
+                break;
+            }
+
+            let space_count = line.bytes().take_while(|b| *b == b' ').count();
+            if space_count == line.len() {
+                leading_blanks.push((space_count, cursor));
+            } else {
+                // First non-empty content line establishes `m`.
+                let m = space_count;
+                if let Some(&(_, offset)) = leading_blanks.iter().find(|(sp, _)| *sp > m) {
+                    let at = scalar_start + offset;
+                    return Some(diag_at_range(
+                        at,
+                        at + 1,
+                        diagnostic_codes::PARSE_UNEXPECTED_INDENT,
+                        "block scalar leading empty line is more indented than its content",
+                    ));
+                }
+                break;
+            }
+
+            if line_end >= text.len() {
+                break;
+            }
+            cursor = line_end + 1;
+        }
+    }
+    None
+}
+
 /// Cluster J — bare scalar at document level immediately followed by a
 /// block-map whose first entry's key is colon-only.
 ///
@@ -1604,6 +1729,72 @@ mod tests {
 
     fn run(input: &str) -> Option<YamlDiagnostic> {
         validate_yaml(input)
+    }
+
+    #[test]
+    fn unterminated_quoted_scalar_at_eof_cq3w() {
+        // CQ3W: a double-quoted value that never reaches its closing quote.
+        let input = "---\nkey: \"missing closing quote";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(diag.code, diagnostic_codes::LEX_UNTERMINATED_QUOTED_SCALAR);
+    }
+
+    #[test]
+    fn unterminated_quoted_scalar_aborted_by_doc_marker_5trb_rxy3() {
+        // 5TRB / RXY3: a `---`/`...` marker at column 0 aborts an open
+        // quoted scalar before its closing quote is found.
+        for input in ["---\n\"\n---\n\"\n", "---\n'\n...\n'\n"] {
+            let diag = run(input).expect("expected diagnostic");
+            assert_eq!(
+                diag.code,
+                diagnostic_codes::LEX_UNTERMINATED_QUOTED_SCALAR,
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn block_scalar_leading_blank_overindented_5llu() {
+        // 5LLU: folded scalar, leading blanks at 1/2/3 spaces, first
+        // content line `invalid` at 1 space.
+        let input = "block scalar: >\n \n  \n   \n invalid\n";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(diag.code, diagnostic_codes::PARSE_UNEXPECTED_INDENT);
+    }
+
+    #[test]
+    fn block_scalar_leading_blank_overindented_w9l4() {
+        // W9L4: literal scalar, leading blank at 5 spaces, content at 2.
+        let input = "---\nblock scalar: |\n     \n  more spaces at the beginning\n  are invalid\n";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(diag.code, diagnostic_codes::PARSE_UNEXPECTED_INDENT);
+    }
+
+    #[test]
+    fn block_scalar_leading_blank_overindented_s98z() {
+        // S98Z: folded scalar, leading blanks at 1/2/3 spaces, first
+        // non-empty line ` # comment` at 1 space (a `#` is literal
+        // content inside a block scalar).
+        let input = "empty block scalar: >\n \n  \n   \n # comment\n";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(diag.code, diagnostic_codes::PARSE_UNEXPECTED_INDENT);
+    }
+
+    #[test]
+    fn block_scalar_explicit_indent_indicator_not_flagged() {
+        // Explicit indent indicator ⇒ not auto-detected; the §8.1.1.1
+        // leading-blank rule does not apply (and a deeper first line is
+        // legitimate content).
+        let input = "a: |2\n     \n   more\n";
+        assert!(run(input).is_none(), "got {:?}", run(input));
+    }
+
+    #[test]
+    fn block_scalar_well_indented_leading_blank_passes() {
+        // Leading blank (1 space) is not more indented than content
+        // (2 spaces) ⇒ no error.
+        let input = "a: |\n \n  body\n";
+        assert!(run(input).is_none(), "got {:?}", run(input));
     }
 
     #[test]

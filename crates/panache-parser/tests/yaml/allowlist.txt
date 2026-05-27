@@ -577,3 +577,22 @@ A2M4
 # extract_block_scalar_body instead of emitting it as a plain scalar.
 5WE3
 KK5P
+# Error-contract: unterminated quoted scalar. The streaming scanner already
+# detects a `"`/`'` scalar that never reaches its closing quote, but
+# validate_yaml consumed only the token stream and dropped the lex diagnostic;
+# check_unterminated_quoted now surfaces YAML_LEX_UNTERMINATED_QUOTED_SCALAR.
+# CQ3W: quote runs to EOF (`key: "missing closing quote`).
+CQ3W
+# 5TRB / RXY3: a `---`/`...` document marker at column 0 aborts the still-open
+# quoted scalar before its closing quote is found.
+5TRB
+RXY3
+# Error-contract: block-scalar leading empty line over-indented (YAML 1.2
+# §8.1.1.1). With auto-detected indentation, a leading blank line may not
+# contain more spaces than the first non-empty content line; check_block_scalar_
+# leading_indent walks the `>`/`|` scalar token's body and rejects it with
+# YAML_PARSE_UNEXPECTED_INDENT. 5LLU/W9L4: blank lines deeper than content;
+# S98Z: same shape where the first non-empty line is a literal `# comment`.
+5LLU
+W9L4
+S98Z

@@ -1,0 +1,10 @@
+---
+source: crates/panache-parser/tests/yaml.rs
+assertion_line: 250
+expression: snapshot
+---
+case_id: CQ3W
+input: "---\nkey: \"missing closing quote\n"
+has_error_contract: true
+parsed_mapping_tree: false
+diagnostics: [YAML_LEX_UNTERMINATED_QUOTED_SCALAR:unterminated quoted scalar@9..32]
