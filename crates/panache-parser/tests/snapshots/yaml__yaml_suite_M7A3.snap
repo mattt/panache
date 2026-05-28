@@ -1,0 +1,10 @@
+---
+source: crates/panache-parser/tests/yaml.rs
+assertion_line: 250
+expression: snapshot
+---
+case_id: M7A3
+input: "Bare\ndocument\n...\n# No document\n...\n|\n%!PS-Adobe-2.0 # Not the first line\n"
+has_error_contract: false
+parsed_mapping_tree: true
+diagnostics: []

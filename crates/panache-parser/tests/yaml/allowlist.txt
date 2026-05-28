@@ -657,3 +657,12 @@ Q4CL
 # case in the harness will flag any future regression where tag dispatch
 # silently accepts the shape.
 QLJ7
+# Doc-root literal/folded block scalar with column-0 body (e.g. `--- |\n%!PS-Adobe-2.0`).
+# Per YAML 1.2 §8.1.1.1 content indent must be strictly greater than the
+# block scalar's parent indent; at doc root parent = -1, so column 0 is
+# permitted. The scanner now uses floor = parent+1 (>=0) instead of the
+# libyaml `max(parent,0)+1` shortcut, so the body — including lines
+# starting with `%`, `#`, `...` does NOT terminate early — is
+# captured as a single Scalar token.
+M7A3
+W4TN

@@ -857,17 +857,19 @@ impl<'a> Scanner<'a> {
                 }
             }
         }
-        // Determine the minimum content indent. The libyaml rule:
-        // base = max(parent_indent, 0); explicit indicator m yields
-        // base + m; otherwise auto-detect from the first non-blank
-        // content line, falling back to base + 1.
+        // Determine the minimum content indent. Per YAML 1.2 §8.1.1.1
+        // content indent must be strictly greater than the parent's
+        // indent. At doc root parent_indent = -1, so column-0 content
+        // is permitted (floor = 0). Otherwise the floor is parent+1.
+        // An explicit indicator m gives content indent max(parent,0)+m.
         let base = parent_indent.max(0);
+        let auto_floor = (parent_indent + 1).max(0);
         let min_indent = match explicit_increment {
             Some(m) => base + m as i32,
             None => self
                 .auto_detect_block_scalar_indent()
-                .unwrap_or(base + 1)
-                .max(base + 1),
+                .unwrap_or(auto_floor)
+                .max(auto_floor),
         };
         // Walk content lines via lookahead so a dedented line stays
         // unconsumed and the main fetch loop sees it.
