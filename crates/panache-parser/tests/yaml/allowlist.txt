@@ -670,3 +670,13 @@ QLJ7
 # captured as a single Scalar token.
 M7A3
 W4TN
+# Error-contract: a content scalar value (e.g. `key1: "quoted1"`)
+# followed on the next line by a deeper-indent block-map entry inside
+# the same block-map value slot. YAML 1.2 §8.2.2 lets an implicit
+# block-mapping value hold a single node or be empty; once a scalar
+# fills the slot, a nested block collection at a deeper indent under
+# the same key is rejected. `check_block_collection_after_value_scalar`
+# exempts node-property–only shadow scalars (`&anchor`/`!tag`/`*alias`)
+# so anchor/tag placeholders preceding a real block value (7BMT,
+# U3XV, 6JWB, RZP5, XW4D) keep parsing.
+U44R

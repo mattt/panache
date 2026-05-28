@@ -428,6 +428,13 @@
       "event_parity": false
     },
     {
+      "case_id": "U44R",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
       "case_id": "W9L4",
       "diagnostic_codes": [
         "YAML_PARSE_UNEXPECTED_INDENT"
@@ -522,12 +529,6 @@
     },
     {
       "case_id": "SY6V",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "U44R",
       "diagnostic_codes": [],
       "event_parity": false,
       "tree": true
@@ -872,8 +873,8 @@
     "ZWK4"
   ],
   "summary": {
-    "error_contract_ok_count": 68,
-    "fails_needs_error_path_count": 10,
+    "error_contract_ok_count": 69,
+    "fails_needs_error_path_count": 9,
     "fails_needs_feature_count": 11,
     "passes_now_count": 244,
     "total_cases": 352

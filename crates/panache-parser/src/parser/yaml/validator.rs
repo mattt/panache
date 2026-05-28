@@ -180,6 +180,9 @@ pub(crate) fn validate_yaml(input: &str) -> Option<YamlDiagnostic> {
     if let Some(diag) = check_doc_level_bare_scalar_then_colon_map(&tree) {
         return Some(diag);
     }
+    if let Some(diag) = check_block_collection_after_value_scalar(&tree) {
+        return Some(diag);
+    }
     if let Some(diag) = check_flow_continuation_indent(&tree, input) {
         return Some(diag);
     }
@@ -1637,6 +1640,81 @@ fn first_entry_has_colon_only_key(block_map: &SyntaxNode) -> bool {
         }
     }
     has_colon
+}
+
+/// Cluster J' — content scalar value followed by a deeper-indent
+/// block collection inside the same `YAML_BLOCK_MAP_VALUE`.
+///
+/// YAML 1.2 §8.2.2 requires the value of an implicit block-mapping
+/// entry to be either a single node or empty. Once a content scalar
+/// has terminated the value (e.g. `key1: "quoted1"`), the next
+/// non-blank line at a deeper indent column cannot start a fresh
+/// nested block collection underneath the same key — the indent
+/// implies sub-content, but the value slot is already filled.
+///
+/// CST signature: a `YAML_BLOCK_MAP_VALUE` whose direct children
+/// include a content `YAML_SCALAR`, then `NEWLINE` trivia, then a
+/// `YAML_BLOCK_MAP` or `YAML_BLOCK_SEQUENCE`. Compact-mapping shapes
+/// (`a: <scalar>: <value>`, W5VH/26DV) put the scalar and the inner
+/// map on the same line with no separating newline, so they are
+/// preserved by the `NEWLINE`-between requirement.
+///
+/// Node-property–only scalars (`&anchor`, `!tag`, `*alias`) are
+/// exempt: the scanner currently folds anchor/alias/tag indicators
+/// into plain-scalar tokens, so a placeholder scalar like `&node1`
+/// preceding the actual value's block collection is a parser shadow
+/// that should not be flagged. `scalar_is_content_implicit_key`
+/// already encodes that exemption.
+///
+/// Covers fixture U44R (`key1: "quoted1"\n   key2: ...`).
+fn check_block_collection_after_value_scalar(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
+    for value in tree
+        .descendants()
+        .filter(|n| n.kind() == SyntaxKind::YAML_BLOCK_MAP_VALUE)
+    {
+        let mut last_scalar: Option<SyntaxToken> = None;
+        let mut saw_newline_after_scalar = false;
+        for child in value.children_with_tokens() {
+            match &child {
+                NodeOrToken::Token(t) => match t.kind() {
+                    SyntaxKind::YAML_SCALAR => {
+                        last_scalar = Some(t.clone());
+                        saw_newline_after_scalar = false;
+                    }
+                    SyntaxKind::NEWLINE => {
+                        if last_scalar.is_some() {
+                            saw_newline_after_scalar = true;
+                        }
+                    }
+                    SyntaxKind::WHITESPACE | SyntaxKind::YAML_COMMENT => {}
+                    _ => {
+                        last_scalar = None;
+                        saw_newline_after_scalar = false;
+                    }
+                },
+                NodeOrToken::Node(n) => {
+                    if saw_newline_after_scalar
+                        && matches!(
+                            n.kind(),
+                            SyntaxKind::YAML_BLOCK_MAP | SyntaxKind::YAML_BLOCK_SEQUENCE
+                        )
+                        && let Some(scalar) = last_scalar.as_ref()
+                        && scalar_is_content_implicit_key(scalar.text())
+                    {
+                        return Some(diag_at_range(
+                            n.text_range().start().into(),
+                            (Into::<usize>::into(n.text_range().start())) + 1,
+                            diagnostic_codes::PARSE_UNEXPECTED_INDENT,
+                            "block collection cannot follow a scalar value at a deeper indent",
+                        ));
+                    }
+                    last_scalar = None;
+                    saw_newline_after_scalar = false;
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Cluster K — flow collection inside a block-map value whose
