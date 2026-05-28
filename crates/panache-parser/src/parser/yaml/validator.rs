@@ -206,6 +206,12 @@ pub(crate) fn validate_yaml(input: &str) -> Option<YamlDiagnostic> {
     if let Some(diag) = check_anchor_decorates_alias(&tree) {
         return Some(diag);
     }
+    if let Some(diag) = check_anchor_before_block_indicator(&tree) {
+        return Some(diag);
+    }
+    if let Some(diag) = check_anchor_without_target(&tree) {
+        return Some(diag);
+    }
     if let Some(diag) = check_invalid_tag_chars(&tree) {
         return Some(diag);
     }
@@ -2036,6 +2042,17 @@ fn check_invalid_tag_chars(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
     None
 }
 
+/// Cluster M — anchor decorates a non-node. YAML 1.2 §6.9.2: an alias
+/// is a complete node and cannot carry node properties, and §6.9.2
+/// likewise forbids multiple anchors on a single node. Either pattern
+/// is rejected here.
+///
+/// Covers:
+/// - SR86 / SU74 (`&b *alias`): `YAML_ANCHOR` followed by a
+///   `YAML_ALIAS` token within the same value/key/item container.
+/// - 4JVG (`top2: &node2\n  &v2 val2`): two `YAML_ANCHOR` tokens
+///   within the same container with no node between them — the
+///   spec allows only one anchor per node.
 fn check_anchor_decorates_alias(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
     for container in tree.descendants().filter(|n| {
         matches!(
@@ -2055,6 +2072,14 @@ fn check_anchor_decorates_alias(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
                 continue;
             };
             match tok.kind() {
+                SyntaxKind::YAML_ANCHOR if saw_anchor => {
+                    return Some(diag_at_range(
+                        tok.text_range().start().into(),
+                        tok.text_range().end().into(),
+                        diagnostic_codes::PARSE_MULTIPLE_ANCHORS_ON_NODE,
+                        "node cannot have multiple anchors",
+                    ));
+                }
                 SyntaxKind::YAML_ANCHOR => saw_anchor = true,
                 SyntaxKind::YAML_ALIAS if saw_anchor => {
                     return Some(diag_at_range(
@@ -2066,6 +2091,97 @@ fn check_anchor_decorates_alias(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
                 }
                 SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::YAML_COMMENT => {}
                 _ => saw_anchor = false,
+            }
+        }
+    }
+    None
+}
+
+/// Cluster O — anchor immediately precedes a block sequence indicator
+/// on the same line. YAML 1.2 §8.1: a block sequence's `-` must start
+/// a new line; an anchor cannot share the line with the first `-`
+/// because the anchor's node would have to be the sequence itself,
+/// which requires the indicator on its own line at appropriate
+/// indent.
+///
+/// Covers SY6V (`&anchor - sequence entry`).
+fn check_anchor_before_block_indicator(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
+    for container in tree.descendants().filter(|n| {
+        matches!(
+            n.kind(),
+            SyntaxKind::YAML_DOCUMENT
+                | SyntaxKind::YAML_BLOCK_MAP_KEY
+                | SyntaxKind::YAML_BLOCK_MAP_VALUE
+                | SyntaxKind::YAML_BLOCK_SEQUENCE_ITEM
+        )
+    }) {
+        let mut anchor_pending: Option<(usize, usize)> = None;
+        for child in container.children_with_tokens() {
+            match child {
+                NodeOrToken::Token(tok) => match tok.kind() {
+                    SyntaxKind::YAML_ANCHOR => {
+                        anchor_pending = Some((
+                            tok.text_range().start().into(),
+                            tok.text_range().end().into(),
+                        ));
+                    }
+                    SyntaxKind::WHITESPACE | SyntaxKind::YAML_COMMENT => {}
+                    SyntaxKind::NEWLINE => {
+                        anchor_pending = None;
+                    }
+                    _ => {
+                        anchor_pending = None;
+                    }
+                },
+                NodeOrToken::Node(node) => {
+                    if let Some((start, end)) = anchor_pending.take()
+                        && node.kind() == SyntaxKind::YAML_BLOCK_SEQUENCE
+                    {
+                        return Some(diag_at_range(
+                            start,
+                            end,
+                            diagnostic_codes::PARSE_ANCHOR_BEFORE_BLOCK_INDICATOR,
+                            "anchor cannot precede a block sequence indicator on the same line",
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Cluster P — anchor inside a block sequence item with no target.
+/// YAML 1.2 §6.9.2 requires every node property (anchor or tag) to
+/// be attached to a following node. A `YAML_ANCHOR` token that
+/// appears *after* the item's value scalar/node has no target it
+/// could legitimately decorate.
+///
+/// Covers GT5M (`- item1\n&node\n- item2`): the parser folds the
+/// stray anchor into the preceding item, but it cannot belong there
+/// — items are single-value containers and the anchor follows that
+/// single value.
+fn check_anchor_without_target(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
+    for container in tree
+        .descendants()
+        .filter(|n| n.kind() == SyntaxKind::YAML_BLOCK_SEQUENCE_ITEM)
+    {
+        let mut saw_value = false;
+        for child in container.children_with_tokens() {
+            match child {
+                NodeOrToken::Token(tok) => match tok.kind() {
+                    SyntaxKind::YAML_ANCHOR if saw_value => {
+                        return Some(diag_at_range(
+                            tok.text_range().start().into(),
+                            tok.text_range().end().into(),
+                            diagnostic_codes::PARSE_ANCHOR_WITHOUT_TARGET,
+                            "anchor has no target node",
+                        ));
+                    }
+                    SyntaxKind::YAML_SCALAR | SyntaxKind::YAML_ALIAS => saw_value = true,
+                    _ => {}
+                },
+                NodeOrToken::Node(_) => saw_value = true,
             }
         }
     }
@@ -3037,6 +3153,60 @@ mod tests {
         // Contract guard: verbatim form `!<uri>` allows any ns-uri-char
         // in the URI body, including `,` and `[`.
         let input = "key: !<tag:example.com,2011:foo[bar]> value\n";
+        assert!(run(input).is_none(), "got {:?}", run(input));
+    }
+
+    #[test]
+    fn multiple_anchors_on_node_4jvg() {
+        // 4JVG: scalar value decorated with two anchors
+        // (`top2: &node2\n  &v2 val2`).
+        let input = "top1: &node1\n  &k1 key1: val1\ntop2: &node2\n  &v2 val2\n";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(diag.code, diagnostic_codes::PARSE_MULTIPLE_ANCHORS_ON_NODE);
+    }
+
+    #[test]
+    fn single_anchor_per_node_passes() {
+        // Contract guard: one anchor per value is fine, even when
+        // siblings carry anchors of their own.
+        let input = "k1: &a 1\nk2: &b 2\n";
+        assert!(run(input).is_none(), "got {:?}", run(input));
+    }
+
+    #[test]
+    fn anchor_before_block_seq_indicator_sy6v() {
+        // SY6V: `&anchor - sequence entry` — anchor must not share its
+        // line with the leading block-sequence `-`.
+        let input = "&anchor - sequence entry\n";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(
+            diag.code,
+            diagnostic_codes::PARSE_ANCHOR_BEFORE_BLOCK_INDICATOR
+        );
+    }
+
+    #[test]
+    fn anchor_on_own_line_before_block_seq_passes() {
+        // Contract guard: anchor on its own line preceding a block
+        // sequence is valid.
+        let input = "&anchor\n- item\n";
+        assert!(run(input).is_none(), "got {:?}", run(input));
+    }
+
+    #[test]
+    fn anchor_without_target_gt5m() {
+        // GT5M: `- item1\n&node\n- item2` — anchor between sequence
+        // items has no target node.
+        let input = "- item1\n&node\n- item2\n";
+        let diag = run(input).expect("expected diagnostic");
+        assert_eq!(diag.code, diagnostic_codes::PARSE_ANCHOR_WITHOUT_TARGET);
+    }
+
+    #[test]
+    fn anchor_before_block_seq_item_value_passes() {
+        // Contract guard: `- &a item` — anchor before the item's value
+        // is valid.
+        let input = "- &a item\n- b\n";
         assert!(run(input).is_none(), "got {:?}", run(input));
     }
 }

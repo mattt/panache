@@ -7,4 +7,4 @@ case_id: GT5M
 input: "- item1\n&node\n- item2\n"
 has_error_contract: true
 parsed_mapping_tree: false
-diagnostics: [YAML_PARSE_INVALID_KEY_TOKEN:stray content following a block sequence item at its indent level@8..13]
+diagnostics: [YAML_PARSE_ANCHOR_WITHOUT_TARGET:anchor has no target node@8..13]

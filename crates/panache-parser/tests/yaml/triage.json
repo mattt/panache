@@ -43,6 +43,13 @@
       "event_parity": false
     },
     {
+      "case_id": "4JVG",
+      "diagnostic_codes": [
+        "YAML_PARSE_MULTIPLE_ANCHORS_ON_NODE"
+      ],
+      "event_parity": false
+    },
+    {
       "case_id": "55WF",
       "diagnostic_codes": [
         "YAML_LEX_INVALID_DOUBLE_QUOTED_ESCAPE"
@@ -295,6 +302,13 @@
       "event_parity": false
     },
     {
+      "case_id": "GT5M",
+      "diagnostic_codes": [
+        "YAML_PARSE_ANCHOR_WITHOUT_TARGET"
+      ],
+      "event_parity": false
+    },
+    {
       "case_id": "H7TQ",
       "diagnostic_codes": [
         "YAML_PARSE_MALFORMED_YAML_DIRECTIVE"
@@ -435,6 +449,13 @@
       "event_parity": false
     },
     {
+      "case_id": "SY6V",
+      "diagnostic_codes": [
+        "YAML_PARSE_ANCHOR_BEFORE_BLOCK_INDICATOR"
+      ],
+      "event_parity": false
+    },
+    {
       "case_id": "T833",
       "diagnostic_codes": [
         "YAML_PARSE_INVALID_FLOW_SEQUENCE_COMMA"
@@ -514,18 +535,6 @@
   ],
   "fails_needs_error_path": [
     {
-      "case_id": "4JVG",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "GT5M",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
       "case_id": "H7J7",
       "diagnostic_codes": [],
       "event_parity": false,
@@ -533,12 +542,6 @@
     },
     {
       "case_id": "QLJ7",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "SY6V",
       "diagnostic_codes": [],
       "event_parity": false,
       "tree": true
@@ -803,8 +806,8 @@
     "ZWK4"
   ],
   "summary": {
-    "error_contract_ok_count": 73,
-    "fails_needs_error_path_count": 5,
+    "error_contract_ok_count": 76,
+    "fails_needs_error_path_count": 2,
     "fails_needs_feature_count": 0,
     "passes_now_count": 255,
     "total_cases": 352

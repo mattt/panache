@@ -1,0 +1,10 @@
+---
+source: crates/panache-parser/tests/yaml.rs
+assertion_line: 283
+expression: snapshot
+---
+case_id: SY6V
+input: "&anchor - sequence entry\n"
+diagnostics:
+YAML_PARSE_ANCHOR_BEFORE_BLOCK_INDICATOR:anchor cannot precede a block sequence indicator on the same line@0..7
+cst:

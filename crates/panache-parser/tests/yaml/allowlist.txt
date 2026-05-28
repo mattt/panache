@@ -811,3 +811,24 @@ SU74
 # U99R: tag with `,` in suffix (`- !!str, xxx`).
 LHL4
 U99R
+# Cluster M extension — multiple anchors on a single node. YAML 1.2
+# §6.9.2 allows only one anchor per node, alongside the existing
+# anchor-decorates-alias rule.
+# 4JVG: `top2: &node2\n  &v2 val2` — the value's `&v2` follows
+# `&node2` after only newline/whitespace within the same block-map
+# value, so the second anchor is rejected as duplicate decoration.
+4JVG
+# Cluster O — anchor immediately precedes a block-sequence indicator
+# on the same line. YAML 1.2 §8.1 requires the `-` to start a new
+# line; an anchor sharing the line with the first `-` cannot decorate
+# the sequence node.
+# SY6V: `&anchor - sequence entry` — anchor and the leading `-` sit
+# on the same line.
+SY6V
+# Cluster P — anchor inside a block-sequence item with no target.
+# YAML 1.2 §6.9.2 requires every node property to be attached to a
+# following node; a stray anchor folded into the preceding sequence
+# item has nothing to decorate.
+# GT5M: `- item1\n&node\n- item2` — `&node` lands inside item1 after
+# its value scalar with no node behind it.
+GT5M
