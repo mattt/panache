@@ -1,0 +1,9 @@
+---
+source: crates/panache-parser/tests/yaml.rs
+expression: snapshot
+---
+case_id: Y79Y/004
+input: "-\t-\n"
+diagnostics:
+YAML_PARSE_UNEXPECTED_INDENT:tab character used as indentation is not allowed in YAML@1..2
+cst:

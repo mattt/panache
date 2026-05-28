@@ -938,3 +938,25 @@ JEF9/02
 # is content, and content-indent detection now treats tabs past
 # leading spaces as content rather than whitespace.
 Y79Y/001
+# Y79Y/000, Y79Y/003-009 tab-in-indent-slot — tab characters in
+# indentation position are illegal per §6.1. `check_tab_as_indent`
+# now covers three shapes: a leading-tab WHITESPACE in a body line
+# of a flow container nested under a block (Y79Y/003), a leading-
+# tab WHITESPACE immediately after a block scalar (`|`/`>`) header
+# that ends with `\n` (Y79Y/000), and a tab-bearing WHITESPACE
+# between a block indicator (`-`/`?`/`:`) and a nested block
+# collection (Y79Y/004-009). Whitespace-only tab lines are skipped
+# so 6CA3 and 6HB6 still accept tabs as flow-context separators.
+Y79Y/000
+Y79Y/003
+Y79Y/004
+Y79Y/005
+Y79Y/006
+Y79Y/007
+Y79Y/008
+Y79Y/009
+# DK95/04 tab-only blank line between block-map entries — bonus
+# unlock from the case-(a-newline) refinement: a whitespace-only
+# `\t` line between `foo: 1` and `bar: 2` is now treated as a
+# blank separator (the existing check would have rejected it).
+DK95/04

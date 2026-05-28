@@ -1311,42 +1311,140 @@ fn block_map_entry_key_is_explicit(value: &SyntaxNode) -> bool {
         })
 }
 
-/// Detects a `WHITESPACE` token that begins with a tab, used as
-/// indent (i.e. immediately preceded by a `NEWLINE` token within a
-/// structural block-context node).
+/// Tab characters are never legal indentation (§6.1 — "indentation is
+/// restricted to space characters"). Three shapes share that root cause:
+///
+/// - **NEWLINE → tab-bearing WHITESPACE → content** in any block or flow
+///   container. A tab-only line that is followed immediately by another
+///   NEWLINE (or by EOF) is whitespace-only and isn't load-bearing
+///   indentation, so we skip it (covers Y79Y/002's `[NEWLINE, "\t",
+///   NEWLINE]` inside a flow sequence).
+/// - **block scalar (`|` / `>`) ending with `\n` → tab-bearing
+///   WHITESPACE**. The scalar token absorbs everything it can fit into
+///   its body; if the next byte after the trailing newline is a tab, the
+///   tab is sitting in the scalar's body-line indentation slot (Y79Y/000).
+/// - **block indicator (`-` / `?` / `:`) → tab-bearing WHITESPACE →
+///   nested block collection**. After `s-separate-in-line` the spec
+///   wants `s-indent(n+m)` for the inner collection, which is defined as
+///   spaces only; a tab in this separator slot makes the inner block's
+///   indentation column ambiguous (Y79Y/004-009).
+///
+/// Tabs in WHITESPACE that *don't* sit in an indentation slot — e.g.
+/// `-\tscalar`, where `s-separate-in-line` legitimately accepts a tab
+/// between the indicator and a plain scalar — are not flagged.
 fn check_tab_as_indent(tree: &SyntaxNode) -> Option<YamlDiagnostic> {
+    fn tab_diag(t: &crate::syntax::SyntaxToken) -> YamlDiagnostic {
+        diag_at_range(
+            t.text_range().start().into(),
+            t.text_range().end().into(),
+            diagnostic_codes::PARSE_UNEXPECTED_INDENT,
+            "tab character used as indentation is not allowed in YAML",
+        )
+    }
+    fn flow_has_block_ancestor(n: &SyntaxNode) -> bool {
+        n.ancestors().any(|a| {
+            matches!(
+                a.kind(),
+                SyntaxKind::YAML_BLOCK_MAP
+                    | SyntaxKind::YAML_BLOCK_SEQUENCE
+                    | SyntaxKind::YAML_BLOCK_MAP_KEY
+                    | SyntaxKind::YAML_BLOCK_MAP_VALUE
+                    | SyntaxKind::YAML_BLOCK_SEQUENCE_ITEM
+            )
+        })
+    }
     for node in tree.descendants().filter(|n| {
-        matches!(
+        let is_block = matches!(
             n.kind(),
             SyntaxKind::YAML_BLOCK_MAP_VALUE
                 | SyntaxKind::YAML_BLOCK_MAP_KEY
                 | SyntaxKind::YAML_BLOCK_SEQUENCE_ITEM
                 | SyntaxKind::YAML_BLOCK_MAP
                 | SyntaxKind::YAML_BLOCK_SEQUENCE
-        )
+        );
+        let is_nested_flow = matches!(
+            n.kind(),
+            SyntaxKind::YAML_FLOW_SEQUENCE | SyntaxKind::YAML_FLOW_MAP
+        ) && flow_has_block_ancestor(n);
+        is_block || is_nested_flow
     }) {
-        let mut prev_was_newline = false;
-        for child in node.children_with_tokens() {
-            if let NodeOrToken::Token(t) = &child {
-                match t.kind() {
-                    SyntaxKind::NEWLINE => prev_was_newline = true,
-                    SyntaxKind::WHITESPACE if prev_was_newline => {
-                        if t.text().starts_with('\t') {
-                            return Some(diag_at_range(
-                                t.text_range().start().into(),
-                                t.text_range().end().into(),
-                                diagnostic_codes::PARSE_UNEXPECTED_INDENT,
-                                "tab character used as indentation is not allowed in YAML",
-                            ));
-                        }
-                        prev_was_newline = false;
-                    }
-                    _ => {
-                        prev_was_newline = false;
-                    }
-                }
-            } else {
-                prev_was_newline = false;
+        let children: Vec<_> = node.children_with_tokens().collect();
+        for (i, child) in children.iter().enumerate() {
+            let NodeOrToken::Token(t) = child else {
+                continue;
+            };
+            if t.kind() != SyntaxKind::WHITESPACE || !t.text().contains('\t') {
+                continue;
+            }
+            let starts_with_tab = t.text().starts_with('\t');
+
+            let prev_kind = i
+                .checked_sub(1)
+                .and_then(|j| children.get(j))
+                .and_then(|c| match c {
+                    NodeOrToken::Token(pt) => Some((pt.kind(), pt.text().to_string())),
+                    _ => None,
+                });
+            let next = children.get(i + 1);
+            let next_is_newline = matches!(
+                next,
+                Some(NodeOrToken::Token(nt)) if nt.kind() == SyntaxKind::NEWLINE
+            );
+            let at_eof = next.is_none();
+
+            // Case (a-newline): tab in indent slot after a NEWLINE
+            // token. Only fires when the WHITESPACE *starts* with a
+            // tab — a tab following leading spaces is "after
+            // indentation" and is legal `s-separate-in-line` in flow
+            // context (6HB6's `  \tStill by two` line). Whitespace-
+            // only lines (next is NEWLINE or EOF) are line-folding
+            // fodder, not indentation (Y79Y/002).
+            let prev_is_newline_token = matches!(&prev_kind, Some((SyntaxKind::NEWLINE, _)));
+            if prev_is_newline_token && starts_with_tab && !next_is_newline && !at_eof {
+                return Some(tab_diag(t));
+            }
+
+            // Case (a-blockscalar): tab immediately after a block
+            // scalar (`|` / `>`) whose text ends with `\n`. The
+            // scalar absorbed everything it could fit into its body,
+            // so a dangling tab in the body-line indent slot is
+            // always an error, even if the next byte is another
+            // newline (Y79Y/000).
+            let prev_is_block_scalar_with_trailing_newline = matches!(&prev_kind, Some((SyntaxKind::YAML_SCALAR, text))
+                    if (text.starts_with('|') || text.starts_with('>')) && text.ends_with('\n'));
+            if prev_is_block_scalar_with_trailing_newline && starts_with_tab {
+                return Some(tab_diag(t));
+            }
+
+            // Case (b): tab between a block indicator and a nested
+            // block collection (same-line compact form). The inner
+            // collection's indentation column would be set by the
+            // tab — ambiguous per §6.1. The block indicator may be
+            // an immediate sibling (`?`, `-` inside a key/item) or
+            // the implicit `:` separator when WHITESPACE is the
+            // first child of a YAML_BLOCK_MAP_VALUE (Y79Y/007,
+            // Y79Y/009 where the colon lives in the sibling
+            // YAML_BLOCK_MAP_KEY container).
+            let prev_is_block_indicator = matches!(
+                &prev_kind,
+                Some((
+                    SyntaxKind::YAML_BLOCK_SEQ_ENTRY
+                        | SyntaxKind::YAML_KEY
+                        | SyntaxKind::YAML_COLON,
+                    _,
+                ))
+            );
+            let leads_block_map_value = i == 0 && node.kind() == SyntaxKind::YAML_BLOCK_MAP_VALUE;
+            let next_is_block_collection = matches!(
+                next,
+                Some(NodeOrToken::Node(n))
+                    if matches!(
+                        n.kind(),
+                        SyntaxKind::YAML_BLOCK_SEQUENCE | SyntaxKind::YAML_BLOCK_MAP
+                    )
+            );
+            if (prev_is_block_indicator || leads_block_map_value) && next_is_block_collection {
+                return Some(tab_diag(t));
             }
         }
     }

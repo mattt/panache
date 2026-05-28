@@ -526,6 +526,62 @@
       "event_parity": false
     },
     {
+      "case_id": "Y79Y/000",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
+      "case_id": "Y79Y/003",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
+      "case_id": "Y79Y/004",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
+      "case_id": "Y79Y/005",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
+      "case_id": "Y79Y/006",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
+      "case_id": "Y79Y/007",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
+      "case_id": "Y79Y/008",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
+      "case_id": "Y79Y/009",
+      "diagnostic_codes": [
+        "YAML_PARSE_UNEXPECTED_INDENT"
+      ],
+      "event_parity": false
+    },
+    {
       "case_id": "YJV2",
       "diagnostic_codes": [
         "YAML_PARSE_INVALID_PLAIN_SCALAR_IN_FLOW"
@@ -597,66 +653,9 @@
       "diagnostic_codes": [],
       "event_parity": false,
       "tree": true
-    },
-    {
-      "case_id": "Y79Y/000",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "Y79Y/003",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "Y79Y/004",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "Y79Y/005",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "Y79Y/006",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "Y79Y/007",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "Y79Y/008",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
-    },
-    {
-      "case_id": "Y79Y/009",
-      "diagnostic_codes": [],
-      "event_parity": false,
-      "tree": true
     }
   ],
-  "fails_needs_feature": [
-    {
-      "case_id": "DK95/04",
-      "diagnostic_codes": [
-        "YAML_PARSE_UNEXPECTED_INDENT"
-      ],
-      "event_parity": false,
-      "tree": false
-    }
-  ],
+  "fails_needs_feature": [],
   "passes_now": [
     "229Q",
     "26DV",
@@ -807,6 +806,7 @@
     "DK95/00",
     "DK95/02",
     "DK95/03",
+    "DK95/04",
     "DK95/05",
     "DK95/07",
     "DK95/08",
@@ -967,10 +967,10 @@
     "ZWK4"
   ],
   "summary": {
-    "error_contract_ok_count": 80,
-    "fails_needs_error_path_count": 14,
-    "fails_needs_feature_count": 1,
-    "passes_now_count": 307,
+    "error_contract_ok_count": 88,
+    "fails_needs_error_path_count": 6,
+    "fails_needs_feature_count": 0,
+    "passes_now_count": 308,
     "total_cases": 402
   }
 }
