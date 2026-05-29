@@ -350,6 +350,73 @@ pub(crate) fn extract_example_label_target_at_offset(
     example_label_at_offset(&text, offset).map(normalize_label)
 }
 
+/// If `offset` falls inside a bookdown `(\#prefix:label)` declaration
+/// living in a TEXT token (the shape bookdown registers from inside
+/// table/figure captions and math environments), return the label.
+pub(crate) fn extract_bookdown_definition_target_at_offset(
+    root: &SyntaxNode,
+    offset: usize,
+) -> Option<String> {
+    bookdown_definition_span_at_offset(root, offset).map(|(_, label)| label)
+}
+
+/// Same as [`extract_bookdown_definition_target_at_offset`] but returns
+/// the absolute `TextRange` of the label (used for highlight/rename).
+pub(crate) fn bookdown_definition_label_range_at_offset(
+    root: &SyntaxNode,
+    offset: usize,
+) -> Option<TextRange> {
+    let (span_start, label) = bookdown_definition_span_at_offset(root, offset)?;
+    let label_start = span_start + "(\\#".len();
+    let label_end = label_start + label.len();
+    Some(TextRange::new(
+        TextSize::from(label_start as u32),
+        TextSize::from(label_end as u32),
+    ))
+}
+
+fn bookdown_definition_span_at_offset(root: &SyntaxNode, offset: usize) -> Option<(usize, String)> {
+    let text_size = TextSize::from(offset as u32);
+    let token = match root.token_at_offset(text_size) {
+        rowan::TokenAtOffset::Single(token) => token,
+        rowan::TokenAtOffset::Between(left, right) => {
+            if left.kind() == SyntaxKind::TEXT {
+                left
+            } else {
+                right
+            }
+        }
+        rowan::TokenAtOffset::None => return None,
+    };
+    if token.kind() != SyntaxKind::TEXT {
+        return None;
+    }
+    let token_text = token.text();
+    let token_start: usize = token.text_range().start().into();
+    let rel = offset.checked_sub(token_start)?;
+    let bytes = token_text.as_bytes();
+    let mut scan = 0usize;
+    while scan < bytes.len() {
+        if bytes[scan] != b'(' {
+            scan += 1;
+            continue;
+        }
+        let slice = &token_text[scan..];
+        match crate::parser::inlines::bookdown::try_parse_bookdown_definition(slice) {
+            Some((len, label)) => {
+                let label_start = scan + "(\\#".len();
+                let label_end = label_start + label.len();
+                if label_start <= rel && rel <= label_end {
+                    return Some((token_start + scan, label.to_string()));
+                }
+                scan += len;
+            }
+            None => scan += 1,
+        }
+    }
+    None
+}
+
 pub(crate) fn extract_symbol_text_range(node: &SyntaxNode) -> Option<TextRange> {
     if let Some(crossref) = Crossref::cast(node.clone()) {
         return crossref.keys().first().map(|key| key.text_range());
@@ -442,6 +509,10 @@ pub(crate) fn find_symbol_text_range_at_offset(
     root: &SyntaxNode,
     offset: usize,
 ) -> Option<TextRange> {
+    if let Some(range) = bookdown_definition_label_range_at_offset(root, offset) {
+        return Some(range);
+    }
+
     let mut node = find_node_at_offset(root, offset)?;
 
     loop {

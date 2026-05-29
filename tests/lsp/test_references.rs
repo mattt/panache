@@ -153,6 +153,35 @@ async fn test_references_bookdown_equation_crossref_with_mixed_case_label() {
 }
 
 #[tokio::test]
+async fn test_references_bookdown_table_caption_declaration_resolves_usages() {
+    // Cursor on the `(\#tab:moth-phenotype)` declaration inside a pipe-table
+    // caption should find the matching `\@ref(tab:moth-phenotype)` usage.
+    let server = TestLspServer::new();
+    let content = "\\@ref(tab:moth-phenotype)).\n\n  | a   | b   |\n  | :-: | :-: |\n  |  c  |  d  |\n\n  : (\\#tab:moth-phenotype)\n";
+    server
+        .open_document("file:///test.Rmd", content, "rmarkdown")
+        .await;
+
+    // Line 6 is the caption "  : (\#tab:moth-phenotype)"; column 8 lands
+    // inside the `tab:moth-phenotype` label.
+    let refs = server
+        .references("file:///test.Rmd", 6, 8, true)
+        .await
+        .expect("references");
+
+    assert!(
+        refs.iter().any(|loc| loc.range.start.line == 0),
+        "expected usage on line 0, got: {:?}",
+        refs
+    );
+    assert!(
+        refs.iter().any(|loc| loc.range.start.line == 6),
+        "expected declaration on line 6, got: {:?}",
+        refs
+    );
+}
+
+#[tokio::test]
 async fn test_references_bookdown_theorem_from_div_id_with_declaration() {
     let server = TestLspServer::new();
     let content = r#"Exercise \@ref(exr:mu)

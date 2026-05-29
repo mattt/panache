@@ -25,6 +25,10 @@ pub(crate) fn resolve_symbol_target_at_offset(
         return Some(SymbolTarget::ExampleLabel(key));
     }
 
+    if let Some(label) = helpers::extract_bookdown_definition_target_at_offset(root, offset) {
+        return Some(SymbolTarget::Crossref(label));
+    }
+
     let mut node = helpers::find_node_at_offset(root, offset)?;
 
     loop {
