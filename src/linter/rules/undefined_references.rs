@@ -399,6 +399,28 @@ mod tests {
     }
 
     #[test]
+    fn accepts_bookdown_table_caption_label_declaration() {
+        // Bookdown registers `(\#tab:label)` inside a pipe-table caption as a
+        // crossref target — same shape as the equation form, but for any
+        // bookdown prefix. Mirrors the user-reported false positive on .Rmd.
+        let input = "\\@ref(tab:moth-phenotype)).\n\n  | a   | b   |\n  | :-: | :-: |\n  |  c  |  d  |\n\n  : (\\#tab:moth-phenotype)\n";
+        let mut config = Config {
+            flavor: Flavor::RMarkdown,
+            extensions: crate::config::Extensions::for_flavor(Flavor::RMarkdown),
+            ..Default::default()
+        };
+        config.extensions.bookdown_references = true;
+        let tree = crate::parser::parse(input, Some(config.clone()));
+        let rule = UndefinedReferencesRule;
+        let diagnostics = rule.check(&tree, input, &config, None);
+        assert!(
+            diagnostics.is_empty(),
+            "tab:moth-phenotype should resolve via the table caption's (\\#tab:moth-phenotype) declaration, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
     fn accepts_bookdown_theorem_environment_crossref() {
         let input = "Exercise \\@ref(exr:mu)\n\n::: {#mu .exercise}\nfoobar\n:::\n";
         let mut config = Config {

@@ -773,7 +773,7 @@ pub fn symbol_usage_index_from_tree(
         if token.kind() != SyntaxKind::TEXT {
             continue;
         }
-        collect_bookdown_equation_declarations_from_text_token(&token, &mut index, extensions);
+        collect_bookdown_declarations_from_text_token(&token, &mut index, extensions);
         collect_example_label_usages_from_text_token(&token, &mut index);
     }
 
@@ -1319,12 +1319,12 @@ fn collect_bookdown_definitions<'db>(
     }
 }
 
-fn collect_bookdown_equation_declarations_from_text_token(
+fn collect_bookdown_declarations_from_text_token(
     token: &crate::syntax::SyntaxToken,
     index: &mut SymbolUsageIndex,
     extensions: &crate::config::Extensions,
 ) {
-    if !(extensions.bookdown_references && extensions.bookdown_equation_references) {
+    if !extensions.bookdown_references {
         return;
     }
     let text = token.text();
@@ -1337,11 +1337,19 @@ fn collect_bookdown_equation_declarations_from_text_token(
         }
         let slice = &text[offset..];
         let Some((len, label)) =
-            crate::parser::inlines::bookdown::try_parse_bookdown_equation_definition(slice)
+            crate::parser::inlines::bookdown::try_parse_bookdown_definition(slice)
         else {
             offset += 1;
             continue;
         };
+        // `(\#eq:...)` declarations are gated on the separate
+        // `bookdown_equation_references` extension. Other prefixed
+        // declarations (`tab:`, `fig:`, theorem-family, …) and the
+        // section-id shorthand follow the generic toggle above.
+        if label.starts_with("eq:") && !extensions.bookdown_equation_references {
+            offset += len;
+            continue;
+        }
         let token_start: usize = token.text_range().start().into();
         let full_start = token_start + offset;
         let full_end = full_start + len;
