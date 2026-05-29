@@ -1,12 +1,30 @@
 ---
 name: yaml-shadow-expand
-description: Incrementally expand the Panache YAML shadow parser by triaging
-  yaml-test-suite fixtures one (or a few) at a time and allowlisting cases as
-  parser/projection support grows.
+description: Guard Panache's YAML shadow parser coverage and pick up residual
+  cutover work (multi-line scalar projection unification, upstream fixture
+  refreshes, eventual live-parser replacement) when it ripens. Includes the
+  triage/allowlist nibbling workflow for when new fixtures or regressions
+  surface candidate cases.
 ---
 
-Use this skill when asked to extend YAML shadow parser coverage, add a new
-yaml-test-suite case to the allowlist, or pick "the next best case" to work on.
+Use this skill when:
+
+- A scanner/validator/projection change moved a case out of `passes_now` or
+  `error_contract_ok` and you need to investigate the regression.
+- `scripts/update-yaml-test-suite-fixtures.sh` brought in new upstream cases
+  that need triaging.
+- You're picking up one of the named residual deferrals (the
+  `events.rs::*_with_newlines` / `quoted_val_event_multi_line`
+  multi-line-scalar re-stitch helpers, or the eventual `yaml_parser` live-path
+  cutover).
+- A fresh `fails_needs_feature` or `fails_needs_error_path` entry appears in
+  `triage.json` and you want to pick it up.
+
+**Current state (as of last triage regen):** every fixture is in a terminal
+bucket and allowlisted (`passes_now`: 308, `error_contract_ok`: 94,
+`fails_needs_feature`: 0, `fails_needs_error_path`: 0). The "one more case"
+nibbling workflow has no queue right now — re-run the triage generator before
+assuming there's a case to pick up.
 
 ## Scope boundaries
 
@@ -14,10 +32,9 @@ yaml-test-suite case to the allowlist, or pick "the next best case" to work on.
   `crates/panache-parser/src/parser/yaml/` and the event-parity harness in
   `crates/panache-parser/tests/yaml.rs`.
 - This is a **long-horizon, staged replacement** of the existing
-  `yaml_parser` dependency, not a forever-shadow. Each session grows
-  spec coverage toward that cutover. Don't promise near-term replacement
-  and don't block incremental wins on the eventual rewrite — but don't
-  read this as "we're keeping the current lexer indefinitely" either.
+  `yaml_parser` dependency, not a forever-shadow. Don't promise near-term
+  replacement, but don't read this as "we're keeping the current lexer
+  indefinitely" either.
 - Stay parser-crate scoped. Do not leak YAML parser changes into the formatter
   or CLI.
 - Keep CST lossless (markers, whitespace, comments, scalar trivia preserved).
@@ -139,8 +156,13 @@ case is in before touching it:
    ```
 
 2. **Pick a case** — prefer highest-leverage, lowest-risk:
-   - Start with `fails_needs_feature` entries where `tree: true` — these only
-     need projection fixes.
+   - First check: are `fails_needs_feature_count` and
+     `fails_needs_error_path_count` both 0? If so, the nibbling queue is empty
+     — there is nothing to pick. Stop and report back; don't manufacture work
+     by allowlisting already-allowlisted cases or by cherry-picking from
+     `error_contract_ok` without explicit error-contract modeling.
+   - If the queue is non-empty, start with `fails_needs_feature` entries where
+     `tree: true` — these only need projection fixes.
    - Skim `in.yaml` and `test.event` for a few candidates. Group cases that
      share a root cause so one fix unlocks several.
    - Do not allowlist a case that has an `error` file without modeling the
