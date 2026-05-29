@@ -355,6 +355,20 @@ Format entire documents or selected ranges:
 Format on save is supported by all major editors. See editor configuration
 sections above for setup instructions.
 
+The LSP honors the `exclude` and `extend-exclude` patterns from the discovered
+`panache.toml` for whole-document formatting (`textDocument/formatting`): files
+whose path (relative to the project anchor) matches an exclude pattern are
+skipped, and the server returns no edits. This means format-on-save will leave
+vendored, generated, or otherwise opted-out documents alone --- matching what
+`panache format` does when it walks a directory.
+
+Range formatting (`textDocument/rangeFormatting`) intentionally bypasses
+excludes. A range request only happens when you explicitly select text and
+invoke "format selection", so it's treated as the LSP equivalent of the CLI's
+"explicit file target bypasses excludes" rule. If you need to format an excluded
+file in its entirety, select the whole buffer first or temporarily remove the
+exclude pattern.
+
 ### Go to Definition
 
 Jump from link/footnote references to their definitions:

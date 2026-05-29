@@ -1,6 +1,110 @@
 //! Tests for formatting workflows.
 
 use super::helpers::*;
+use std::fs;
+use tempfile::TempDir;
+use tower_lsp_server::ls_types::Uri;
+
+/// Files matching `extend-exclude` (or `exclude`) in the discovered
+/// `panache.toml` must be skipped by `textDocument/formatting`. Without this,
+/// editors with format-on-save will keep rewriting files the project owner
+/// explicitly opted out of.
+#[tokio::test]
+async fn lsp_format_document_respects_extend_exclude() {
+    let server = TestLspServer::new();
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Make this a project root so config discovery stops here.
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(
+        root.join("panache.toml"),
+        "extend-exclude = [\"vendor/**\"]\n",
+    )
+    .unwrap();
+
+    let vendor_dir = root.join("vendor");
+    fs::create_dir_all(&vendor_dir).unwrap();
+    let doc_path = vendor_dir.join("third_party.qmd");
+    let doc_uri = Uri::from_file_path(&doc_path).expect("doc uri");
+    let root_uri = Uri::from_file_path(root).expect("root uri");
+    server.initialize(root_uri.as_str()).await;
+
+    // Contents that would otherwise produce edits (long line wraps to 80).
+    let long = "This is a very long paragraph that should definitely be wrapped at around 80 characters because that is the default line width for panache.";
+    server.open_document(doc_uri.as_str(), long, "quarto").await;
+
+    let edits = server.format_document(doc_uri.as_str()).await;
+    assert_eq!(
+        edits, None,
+        "file under an excluded path must not return formatting edits"
+    );
+}
+
+/// Range formatting is treated as an explicit user action (the user selected
+/// text and asked to format it) and intentionally bypasses excludes, mirroring
+/// the CLI's "explicit target bypasses excludes" rule.
+#[tokio::test]
+async fn lsp_format_range_bypasses_extend_exclude() {
+    let server = TestLspServer::new();
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(
+        root.join("panache.toml"),
+        "extend-exclude = [\"vendor/**\"]\n",
+    )
+    .unwrap();
+
+    let vendor_dir = root.join("vendor");
+    fs::create_dir_all(&vendor_dir).unwrap();
+    let doc_path = vendor_dir.join("third_party.qmd");
+    let doc_uri = Uri::from_file_path(&doc_path).expect("doc uri");
+    let root_uri = Uri::from_file_path(root).expect("root uri");
+    server.initialize(root_uri.as_str()).await;
+
+    let long = "This is a very long paragraph that should definitely be wrapped at around 80 characters because that is the default line width for panache.";
+    server.open_document(doc_uri.as_str(), long, "quarto").await;
+
+    // Single-line selection covering the long paragraph. Range formatting
+    // must still fire because the user explicitly asked for it.
+    let edits = server.format_range(doc_uri.as_str(), 0, 0, 0, 0).await;
+    assert!(
+        edits.is_some(),
+        "range formatting must run even when the file is under an excluded path"
+    );
+}
+
+/// A file just outside the excluded path should still be formatted normally,
+/// proving the exclude is doing real matching rather than blanket-skipping.
+#[tokio::test]
+async fn lsp_format_document_formats_non_excluded_siblings() {
+    let server = TestLspServer::new();
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    fs::create_dir_all(root.join(".git")).unwrap();
+    fs::write(
+        root.join("panache.toml"),
+        "extend-exclude = [\"vendor/**\"]\n",
+    )
+    .unwrap();
+
+    let doc_path = root.join("intro.qmd");
+    let doc_uri = Uri::from_file_path(&doc_path).expect("doc uri");
+    let root_uri = Uri::from_file_path(root).expect("root uri");
+    server.initialize(root_uri.as_str()).await;
+
+    let long = "This is a very long paragraph that should definitely be wrapped at around 80 characters because that is the default line width for panache.";
+    server.open_document(doc_uri.as_str(), long, "quarto").await;
+
+    let edits = server.format_document(doc_uri.as_str()).await;
+    assert!(
+        edits.is_some(),
+        "non-excluded sibling must still receive formatting edits"
+    );
+}
 
 #[tokio::test]
 async fn test_format_simple_document() {

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_lsp_server::ls_types::{Location, Range, Uri};
 
 use crate::Config;
+use crate::config::ConfigSource;
 use crate::lsp::DocumentState;
 use crate::salsa::Db;
 use crate::syntax::{
@@ -15,7 +16,7 @@ use crate::syntax::{
 use crate::utils::{normalize_anchor_label, normalize_label};
 use rowan::{NodeOrToken, TextRange, TextSize};
 
-use super::config::load_config;
+use super::config::{load_config, load_config_with_source};
 
 /// Helper to get document content from the document map
 pub(crate) async fn get_document_content(
@@ -69,6 +70,74 @@ pub(crate) async fn get_document_and_config(
     let content = get_document_content(document_map, salsa_db, uri).await?;
     let config = get_config(client, workspace_root, uri).await;
     Some((content, config))
+}
+
+/// Like [`get_document_and_config`] but also returns the [`ConfigSource`] and
+/// resolved workspace root, so callers (e.g. formatting handlers) can match the
+/// document URI against `exclude`/`extend_exclude` patterns.
+pub(crate) async fn get_document_config_and_source(
+    client: &tower_lsp_server::Client,
+    document_map: &Arc<Mutex<HashMap<String, DocumentState>>>,
+    salsa_db: &Arc<Mutex<crate::salsa::SalsaDb>>,
+    workspace_root: &Arc<Mutex<Option<PathBuf>>>,
+    uri: &Uri,
+) -> Option<(String, Config, ConfigSource, Option<PathBuf>)> {
+    let content = get_document_content(document_map, salsa_db, uri).await?;
+    let workspace_root = workspace_root.lock().await.clone();
+    let (config, source) = load_config_with_source(client, &workspace_root, Some(uri)).await;
+    Some((content, config, source, workspace_root))
+}
+
+/// Returns `true` when `uri` resolves to a file path that matches the
+/// effective `exclude`/`extend_exclude` patterns from `cfg`, anchored at the
+/// project directory of `source` (falling back to `workspace_root` or the
+/// file's parent when no project anchor is available).
+///
+/// Non-file URIs (e.g. `untitled:`) are never considered excluded.
+pub(crate) fn is_uri_excluded(
+    uri: &Uri,
+    cfg: &Config,
+    source: &ConfigSource,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let Some(path) = uri.to_file_path().map(|p| p.into_owned()) else {
+        return false;
+    };
+
+    let fallback = workspace_root
+        .map(Path::to_path_buf)
+        .or_else(|| path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let anchor = crate::config::anchor_dir(source, &fallback);
+
+    let rel = relative_to_anchor(&path, &anchor)
+        .unwrap_or_else(|| path.file_name().map(PathBuf::from).unwrap_or(path.clone()));
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+
+    let mut patterns = cfg.exclude.clone().unwrap_or_else(|| {
+        crate::config::DEFAULT_EXCLUDE_PATTERNS
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    });
+    patterns.extend(cfg.extend_exclude.iter().cloned());
+
+    match crate::config::GlobMatcher::build(&patterns) {
+        Ok(matcher) => matcher.is_match(&rel_str),
+        Err(_) => false,
+    }
+}
+
+fn relative_to_anchor(path: &Path, anchor: &Path) -> Option<PathBuf> {
+    if let Ok(rel) = path.strip_prefix(anchor) {
+        return Some(rel.to_path_buf());
+    }
+    let canon_path = path.canonicalize().ok()?;
+    let canon_anchor = anchor.canonicalize().ok()?;
+    canon_path
+        .strip_prefix(&canon_anchor)
+        .ok()
+        .map(Path::to_path_buf)
 }
 
 pub(crate) async fn get_definition_index_with_includes(

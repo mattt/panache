@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use tower_lsp_server::Client;
 use tower_lsp_server::ls_types::{MessageType, Uri};
 
+use crate::config::ConfigSource;
+
 /// Load config from workspace root, falling back to default
 ///
 /// If `document_uri` is provided, the file extension will be used to auto-detect
@@ -11,6 +13,18 @@ pub(crate) async fn load_config(
     workspace_root: &Option<PathBuf>,
     document_uri: Option<&Uri>,
 ) -> crate::Config {
+    load_config_with_source(client, workspace_root, document_uri)
+        .await
+        .0
+}
+
+/// Like [`load_config`] but also returns the [`ConfigSource`] so callers can
+/// resolve the project anchor used by `exclude`/`include` patterns.
+pub(crate) async fn load_config_with_source(
+    client: &Client,
+    workspace_root: &Option<PathBuf>,
+    document_uri: Option<&Uri>,
+) -> (crate::Config, ConfigSource) {
     // Convert URI to file path for flavor detection
     let input_file: Option<PathBuf> = if let Some(uri) = document_uri {
         uri.to_file_path().map(|p| p.into_owned())
@@ -39,7 +53,7 @@ pub(crate) async fn load_config(
                         )
                         .await;
                 }
-                return config;
+                return (config, source);
             }
             Err(e) => {
                 client
@@ -66,8 +80,8 @@ pub(crate) async fn load_config(
                 config.extensions = crate::config::Extensions::for_flavor(flavor);
             }
         }
-        return config;
+        return (config, ConfigSource::None);
     }
 
-    crate::Config::default()
+    (crate::Config::default(), ConfigSource::None)
 }

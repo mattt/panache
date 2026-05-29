@@ -7,7 +7,9 @@ use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::*;
 
 use super::super::conversions::offset_to_position;
-use super::super::helpers::get_document_and_config;
+use super::super::helpers::{
+    get_document_and_config, get_document_config_and_source, is_uri_excluded,
+};
 use crate::lsp::DocumentState;
 use crate::{parser, range_utils};
 
@@ -29,8 +31,9 @@ pub(crate) async fn format_document(
         )
         .await;
 
-    // Use helper to get document and config
-    let (text, config) = match get_document_and_config(
+    // Use helper to get document, config, and the source needed for
+    // exclude-pattern resolution.
+    let (text, config, source, workspace_root) = match get_document_config_and_source(
         client,
         &document_map,
         &salsa_db,
@@ -47,6 +50,16 @@ pub(crate) async fn format_document(
             return Ok(None);
         }
     };
+
+    if is_uri_excluded(&uri, &config, &source, workspace_root.as_deref()) {
+        client
+            .log_message(
+                MessageType::INFO,
+                format!("Skipping formatting (matched exclude pattern): {}", *uri),
+            )
+            .await;
+        return Ok(None);
+    }
 
     // Run formatting in a blocking task (because rowan::SyntaxNode isn't Send)
     // but use format_async inside to support external formatters
@@ -112,7 +125,11 @@ pub(crate) async fn format_range(
         )
         .await;
 
-    // Use helper to get document and config
+    // Range formatting intentionally bypasses `exclude`/`extend-exclude`:
+    // unlike whole-document formatting (which fires on save and would otherwise
+    // rewrite opted-out files), a range request only happens when the user
+    // explicitly selects text and asks to format it. Treat that as the LSP
+    // equivalent of the CLI's "explicit file target bypasses excludes" rule.
     let (text, config) = match get_document_and_config(
         client,
         &document_map,
