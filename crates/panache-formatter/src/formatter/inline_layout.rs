@@ -610,9 +610,7 @@ fn node_starts_with_whitespace(node: &SyntaxNode) -> bool {
                 continue;
             }
             NodeOrToken::Node(n) => {
-                if node_starts_with_whitespace(&n) {
-                    return true;
-                }
+                return node_starts_with_whitespace(&n);
             }
             _ => continue,
         }

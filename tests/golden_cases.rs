@@ -410,6 +410,7 @@ golden_test_cases!(
     issue_279_list_item_html_block_trailing_idempotency,
     issue_280_hashpipe_yaml_tag_and_dotted_key_idempotency,
     issue_286_fenced_div_collapse_blanks,
+    issue_332_space_after_inline_code_in_strong,
     writer_autolinks,
     writer_blockquote_not,
     writer_definition_lists_multiblock,
