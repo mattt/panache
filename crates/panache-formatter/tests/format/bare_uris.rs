@@ -41,10 +41,10 @@ fn autolink_bare_uri_uppercase() {
 }
 
 #[test]
-fn autolink_bare_uri_newer_pandoc_schemes() {
+fn autolink_bare_uri_less_common_schemes() {
     similar_asserts::assert_eq!(
-        format_with_bare_uris("gemini://example.com\n"),
-        "[gemini://example.com](gemini://example.com)\n"
+        format_with_bare_uris("ssh://host\n"),
+        "[ssh://host](ssh://host)\n"
     );
     similar_asserts::assert_eq!(
         format_with_bare_uris("mongodb://localhost/db\n"),
