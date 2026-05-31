@@ -911,7 +911,9 @@ Output
 ### YAML
 
 YAML frontmatter is parsed and normalized by
-[`pretty_yaml`](https://github.com/g-plane/pretty_yaml).
+[`pretty_yaml`](https://github.com/g-plane/pretty_yaml). The deterministic style
+rules Panache emits are documented in
+[`STYLE.md`](https://github.com/jolars/panache/blob/main/crates/panache-formatter/src/formatter/yaml/STYLE.md).
 
 Input
 

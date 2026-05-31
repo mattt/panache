@@ -7,8 +7,8 @@
 //! `pretty_yaml::config::FormatOptions` to this struct.
 
 /// Wrapping policy for plain scalars. Quoted (`"…"` / `'…'`) and
-/// block (`>` / `|`) styles are never wrapped — see STYLE.md once it
-/// lands.
+/// block (`>` / `|`) styles are never wrapped — see `STYLE.md` (the
+/// "Plain-scalar wrapping" section).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WrapMode {
     /// Wrap plain scalars to fit `line_width` with +2 indent on

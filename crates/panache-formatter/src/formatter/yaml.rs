@@ -3,8 +3,8 @@
 //! Consumes the in-tree parser CST
 //! ([`panache_parser::parser::yaml::parse_yaml_tree`]) and emits
 //! deterministically-styled YAML text per the 13 style rules in
-//! `.claude/skills/yaml-formatter-cutover/plan.md` (which move to
-//! `STYLE.md` next to this file in Phase 1.2).
+//! `STYLE.md` (next to this file) — the canonical spec, relocated
+//! from `.claude/skills/yaml-formatter-cutover/plan.md` in Phase 1.2.
 //!
 //! **Not wired into the live formatting pipeline.** Until the joint
 //! cutover lands (Phase 2), live YAML output still routes through

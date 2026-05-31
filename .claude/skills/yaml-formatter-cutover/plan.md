@@ -8,7 +8,7 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 ## Status
 
 - **Phase 1 (shadow formatter):** in progress. 1.1 module skeleton
-  landed (byte-passthrough stub); 1.2 (move STYLE spec) and 1.3
+  landed (byte-passthrough stub); 1.2 STYLE.md relocated; 1.3
   (cross-validation harness) outstanding.
 - **Phase 2 (joint cutover):** not started, blocked on Phase 1.
 - **Phase 3 (hashpipe extension):** not started, blocked on Phase 2.
@@ -17,6 +17,16 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 
 _(Update as phases complete. Earliest entries on top.)_
 
+- **Phase 1.2 — STYLE.md relocation.** Moved the 13-rule style spec
+  out of this plan into
+  `crates/panache-formatter/src/formatter/yaml/STYLE.md` (canonical
+  home). Added a pointer from `docs/guide/formatting.qmd` in the
+  YAML frontmatter section so user-facing docs reach the spec.
+  Updated the `crates/panache-formatter/src/formatter/yaml.rs`
+  module doc-comment to cite `STYLE.md` instead of the now-relocated
+  plan-side spec. No behavior change; the formatter module is still
+  the Phase 1.1 byte-passthrough stub. Plan retains rollout context
+  and references STYLE.md from the spec section below.
 - **Phase 1.1 — module skeleton.** Added
   `crates/panache-formatter/src/formatter/yaml.rs` (parent) and the
   six submodule files (`options.rs`, `document.rs`, `block_map.rs`,
@@ -74,84 +84,24 @@ gives the cutover a downstream consumer and a real parity bar.
 
 ## Style spec
 
-The in-tree YAML formatter follows these rules. They are deterministic
-(same input → same output) and small enough to fit in one table.
-Cross-validated against pretty_yaml 0.6.0 and Prettier 3.6.2 on a
+The canonical 13-rule style spec lives in
+[`crates/panache-formatter/src/formatter/yaml/STYLE.md`](../../../crates/panache-formatter/src/formatter/yaml/STYLE.md).
+That file is the source of truth for what the in-tree formatter
+emits; this plan tracks rollout, not the spec itself.
+
+The spec is deterministic (same input → same output) and was
+cross-validated against pretty_yaml 0.6.0 and Prettier 3.6.2 on a
 15-case battery of representative frontmatter — both agree on rules
-1-12; rule 6's bracket placement is the one point where they differ
-and the rule pins pretty_yaml's choice.
+1–12; rule 6's bracket placement is the one point where they differ,
+and the rule pins pretty_yaml's choice. Rule 13 (trailing document
+newline) is not yet cross-validated; that gets done as part of the
+Phase 1.3 corpus harness.
 
-This spec lives here during the planning phase. After Phase 1.1
-creates `crates/panache-formatter/src/formatter/yaml/`, move it to
-`STYLE.md` in that directory and cross-reference from the user-facing
-formatter docs.
-
-1. **Indent.** 2 spaces, fully canonicalized regardless of input shape.
-2. **Sequence items** indented +2 from the parent key
-   (`categories:\n  - foo`, never `- foo` at parent column).
-3. **Quote style preference:** plain → double-quoted → single-quoted only
-   when content contains characters that would need backslash-escaping
-   in double-quoted form (e.g. `'C:\Users\test'`).
-4. **Block scalar style** (literal `|` vs folded `>`): preserved from
-   input. They carry different YAML semantics and are not
-   interchangeable.
-5. **Flow spacing:** `{ key: value }` with spaces inside braces;
-   `[a, b, c]` with a space after each comma.
-6. **Flow wrap on line-width overflow:** each item on its own line,
-   trailing comma, **opening bracket stays on the key line**
-   (`keywords: [\n  first,\n  ...\n]`). This is the one point of
-   disagreement between pretty_yaml and Prettier — we follow
-   pretty_yaml.
-7. **Blank lines:** runs of multiple blank lines collapse to one max.
-8. **Inline comments:** exactly one space before `#`.
-9. **Comment positions** (above key, inline, between keys): preserved.
-   Comments are user-authored content.
-10. **Trailing whitespace** on every line: stripped.
-11. **Empty scalars:** `key:` stays `key:`, never canonicalized to
-    `key: null` or `key: ""`.
-12. **Key order:** preserved. Frontmatter is content the user wrote;
-    reordering would surprise.
-13. **Trailing document newline:** always exactly one `\n` at EOF.
-    Missing trailing newline → add one; multiple trailing newlines
-    → collapse to one. Not cross-validated against pretty_yaml or
-    Prettier yet; needed in Phase 1.3 corpus harness.
-
-Rules 4, 9, and 12 are "preserve" rules: they don't add a new
-behavior, they explicitly decline to canonicalize a
-semantically-meaningful user choice. They're still deterministic.
-
-Rule 3 is the only spec rule with semantic-content awareness. The
-escape-required test is decidable from the scalar's bytes alone (no
-context dependence), so it remains rule-based.
-
-**Plain-scalar wrapping is a config option, not a spec rule.** It is
-controlled by Panache's `wrap` setting, which `yaml_engine.rs` maps
-onto pretty_yaml's `ProseWrap`:
-
-- `wrap: preserve` → `ProseWrap::Preserve` — nothing wraps.
-- `wrap: reflow` (default) / `sentence` / `semantic` →
-  `ProseWrap::Always` — plain scalars wrap with +2 indent continuation
-  lines; quoted (`"…"`, `'…'`) and block (`>`, `|`) styles never wrap
-  regardless of mode.
-
-The in-tree formatter inherits this mapping at cutover. The
-spec-adjacent invariant worth pinning: **only plain scalars are ever
-wrapped; quoted and block styles are preserved verbatim regardless of
-wrap mode**. Wrapping a quoted scalar would change escape behavior
-(double-quoted) or require backslash handling not present in single-
-quoted; wrapping a block scalar would change `>` folding or `|`
-literal semantics.
-
-Edge case worth knowing about: a plain scalar containing
-`key: value`-shaped text (colon followed by space, mid-content) is
-already ambiguous to strict YAML parsers; wrapping it surfaces the
-breakage. The in-tree parser will likely reject this input outright,
-making the wrap question moot. If we ever silently accept it, the
-formatter must avoid wrapping at that boundary.
-
-No further style decisions are open at the spec level. Phase 1 may
-still surface edge cases that need a 14th rule, but the process for
-that is documented in [`yaml-formatter`](../../rules/yaml-formatter.md).
+Adding a 14th rule is a deliberate act and follows the process
+documented in [`yaml-formatter`](../../rules/yaml-formatter.md): a new
+rule in STYLE.md with a one-line rationale and a fixture under
+`crates/panache-formatter/tests/fixtures/yaml_corpus/`, plus an
+explicit decision when it conflicts with pretty_yaml's behavior.
 
 ## Phase 1 — Shadow in-tree formatter (plain metadata)
 
@@ -181,14 +131,12 @@ under `yaml/`. **No `mod.rs`** anywhere in the tree (see AGENTS.md).
 
 ### 1.2 — Move style spec into the module
 
-When `crates/panache-formatter/src/formatter/yaml/` exists, move the
-style-spec table from this plan into
-`crates/panache-formatter/src/formatter/yaml/STYLE.md` and link to it
-from the user-facing formatter docs (`docs/guide/`). The spec then
-has one canonical home; this plan tracks rollout, not the spec
-itself.
+Landed: the 13-rule spec lives in
+`crates/panache-formatter/src/formatter/yaml/STYLE.md`, with a
+pointer from `docs/guide/formatting.qmd` (YAML frontmatter section).
+This plan no longer carries the spec; it tracks rollout only.
 
-If Phase 1 development discovers a 13th rule (an edge case neither
+If Phase 1 development discovers a 14th rule (an edge case neither
 the spec nor pretty_yaml currently covers), add it to STYLE.md with
 a fixture and a one-line rationale. New rules need cross-validation
 against pretty_yaml before landing — if they conflict, decide
