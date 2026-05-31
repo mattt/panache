@@ -17,7 +17,16 @@ the load-bearing invariants.
 
 ## Rules
 
-1. **Indent.** 2 spaces, fully canonicalized regardless of input shape.
+1. **Indent.** 2 spaces, fully canonicalized regardless of input shape. Each
+   content line's indent = `2 * (entry/item nesting depth − 1)` spaces, counting
+   the line's containing `YAML_BLOCK_MAP_ENTRY` + `YAML_BLOCK_SEQUENCE_ITEM`
+   ancestors. Root-level entries/items get 0 spaces. Tab-indented input is
+   rejected by the in-tree parser outright, so the formatter never sees it.
+   Block-scalar (`|`/`>`) interior lines are currently preserved verbatim ---
+   the indent sits inside one multi-line `YAML_SCALAR` token and full
+   canonicalization needs a real block-scalar renderer (tracked separately;
+   keeps pretty_yaml parity on already-canonical cases, diverges on
+   non-canonical block-scalar indent).
 2. **Sequence items** indented +2 from the parent key (`categories:\n  - foo`,
    never `- foo` at parent column).
 3. **Quote style preference:** plain → double-quoted → single-quoted only when
@@ -31,19 +40,36 @@ the load-bearing invariants.
    comma, **opening bracket stays on the key line**
    (`keywords: [\n  first,\n  ...\n]`). This is the one point of disagreement
    between pretty_yaml and Prettier --- we follow pretty_yaml.
-7. **Blank lines:** runs of multiple blank lines collapse to one max.
-8. **Inline comments:** exactly one space before `#`.
+7. **Blank lines:** runs of multiple interior blank lines collapse to one max.
+   Leading blank lines (before the first content line) are stripped entirely ---
+   mirrors rule 13's no-trailing-blanks invariant; preamble whitespace at the
+   top of a frontmatter document is never meaningful. Cross-validated against
+   pretty_yaml on the `tests/fixtures/yaml_corpus/blank_lines/` cases.
+8. **Inline comments:** exactly one space before `#`. Applies only to inline
+   comments (comments with non-whitespace content earlier on the same line);
+   standalone comments (preceded by `NEWLINE` or at file start) keep their
+   original surrounding whitespace. Implemented inside the token walk because
+   line-level passes can't reliably distinguish `#` inside quoted scalars from a
+   comment indicator.
 9. **Comment positions** (above key, inline, between keys): preserved. Comments
    are user-authored content.
-10. **Trailing whitespace** on every line: stripped.
+10. **Trailing whitespace** on every line: stripped. ASCII space and tab only
+    (CRLF round-trips because `\r` is preserved). Applies uniformly, including
+    inside `|`/`>` block scalars --- pretty_yaml does the same; this trades the
+    "trailing space carries semantics inside `|`" YAML-spec quirk for the "no
+    trailing whitespace anywhere" invariant.
 11. **Empty scalars:** `key:` stays `key:`, never canonicalized to `key: null`
     or `key: ""`.
 12. **Key order:** preserved. Frontmatter is content the user wrote; reordering
     would surprise.
 13. **Trailing document newline:** always exactly one `\n` at EOF. Missing
     trailing newline → add one; multiple trailing newlines → collapse to one.
-    Not cross-validated against pretty_yaml or Prettier yet; needed in Phase 1.3
-    corpus harness.
+    Cross-validated against pretty_yaml on the standard zero/one/many cases
+    (`tests/fixtures/yaml_corpus/document/empty.yaml`,
+    `missing_trailing_newline.yaml`, `multiple_trailing_newlines.yaml`).
+    Whitespace-only inputs (e.g. `"   "`) are out of scope for rule 13 alone ---
+    pretty_yaml canonicalizes those more aggressively, and the divergence
+    resolves once the trailing-whitespace rule (#10) lands.
 
 ## Notes
 

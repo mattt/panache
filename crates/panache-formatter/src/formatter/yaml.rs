@@ -13,13 +13,25 @@
 //! `crates/panache-formatter/tests/yaml_cross_validation.rs`. See
 //! `.claude/skills/yaml-formatter-cutover/SKILL.md` for scope.
 //!
-//! Phase 1.3 status: cross-validation harness landed. The dispatcher
-//! still walks the CST and emits every token's source byte verbatim
-//! (byte-lossless, no style rules applied yet), so the corpus is
-//! currently seeded only with trivially-canonical inputs that
-//! round-trip identically through pretty_yaml's defaults. As the
-//! per-container renderers land, real frontmatter and rule-exercising
-//! stressors graduate into the corpus.
+//! Phase 1.8 status: cross-validation harness live; rules 1
+//! (canonical 2-space indent driven by entry/item nesting depth),
+//! 2 (sequence items indent +2 from parent key — carried by rule 1's
+//! depth math, no separate code), 7 (collapse blank-line runs; strip
+//! leading blanks entirely), 8 (one space before inline `#` comments,
+//! emitted during the token walk), 10 (strip trailing whitespace per
+//! line), and 13 (exactly one trailing `\n` at EOF) implemented in
+//! [`document`]. Token bodies inside each line are otherwise emitted
+//! verbatim — per-container restyling (quote style, flow spacing /
+//! wrap, …) has not landed yet. Corpus covers trivially-canonical
+//! inputs, trailing-newline + trailing-WS shape rules, rule-1 indent
+//! stressors (4-space and 8-space collapse, sequence-in-mapping,
+//! sequence-of-mappings), rule-2 parent-column sequences (top-level,
+//! nested, sequence-of-mappings), rule-7 blank-line cases (interior
+//! collapse, whitespace-only blanks, leading-blank strip), and rule-8
+//! inline-comment cases (loose/tight spacing, multiple inline,
+//! standalone-above-key, nested inline). Block scalar (`|`/`>`)
+//! interior lines are left verbatim — rule 1 needs a real
+//! block-scalar renderer to canonicalize them.
 
 #[path = "yaml/block_map.rs"]
 mod block_map;
@@ -55,18 +67,137 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_input_round_trips() {
+    fn empty_input_gets_one_trailing_newline() {
+        // STYLE.md rule 13: every successfully-formatted document
+        // ends with exactly one `\n`. The parser accepts `""` as an
+        // empty document, so the formatter emits `"\n"`.
         let opts = YamlFormatOptions::default();
-        assert_eq!(format_yaml("", &opts), "");
+        assert_eq!(format_yaml("", &opts), "\n");
     }
 
     #[test]
-    fn simple_mapping_is_byte_lossless_in_phase_1_1_stub() {
-        // The 1.1 stub emits tokens verbatim. Cross-validation
-        // against pretty_yaml lands in 1.3 and will surface the
-        // style-rule gaps these byte-passthrough outputs leave open.
+    fn already_canonical_mapping_is_byte_stable() {
+        // Token bodies are still emitted verbatim (no per-container
+        // restyling yet); inputs already in canonical form round-trip
+        // unchanged. Cross-validation lives in
+        // `tests/yaml_cross_validation.rs`.
         let opts = YamlFormatOptions::default();
         let input = "title: My Title\nauthor: Me\n";
         assert_eq!(format_yaml(input, &opts), input);
+    }
+
+    #[test]
+    fn multiple_trailing_newlines_collapse_to_one() {
+        let opts = YamlFormatOptions::default();
+        assert_eq!(format_yaml("key: value\n\n\n", &opts), "key: value\n");
+    }
+
+    #[test]
+    fn missing_trailing_newline_gets_one() {
+        let opts = YamlFormatOptions::default();
+        assert_eq!(format_yaml("key: value", &opts), "key: value\n");
+    }
+
+    #[test]
+    fn nested_indent_canonicalizes_to_two_spaces() {
+        // STYLE.md rule 1: every content line is indented by
+        // 2 * (entry/item nesting depth - 1). 4-space indent
+        // collapses to 2-space; triply-nested 8-space collapses to
+        // 4-space; sequence-in-mapping dashes land at parent-key + 2.
+        let opts = YamlFormatOptions::default();
+        assert_eq!(
+            format_yaml("outer:\n    inner: value\n", &opts),
+            "outer:\n  inner: value\n"
+        );
+        assert_eq!(
+            format_yaml("a:\n    b:\n        c: value\n", &opts),
+            "a:\n  b:\n    c: value\n"
+        );
+        assert_eq!(
+            format_yaml("items:\n    - foo\n    - bar\n", &opts),
+            "items:\n  - foo\n  - bar\n"
+        );
+    }
+
+    #[test]
+    fn block_scalar_interior_lines_preserved() {
+        // Rule 1 skips block-scalar (`|`/`>`) interior lines: their
+        // indent is baked into a single multi-line YAML_SCALAR token
+        // and proper canonicalization needs a real block-scalar
+        // renderer. The indicator line itself (`key: |`) still gets
+        // standard rewriting.
+        let opts = YamlFormatOptions::default();
+        let input = "key: |\n  line one\n  line two\n";
+        assert_eq!(format_yaml(input, &opts), input);
+    }
+
+    #[test]
+    fn rule_8_inline_comment_spacing_normalized() {
+        // Rule 8: exactly one space before `#` for inline comments.
+        // Standalone comments (line-start) keep their original
+        // surrounding whitespace (no inline context to normalize).
+        let opts = YamlFormatOptions::default();
+        assert_eq!(
+            format_yaml("key: value   # loose\n", &opts),
+            "key: value # loose\n"
+        );
+        assert_eq!(
+            format_yaml("key: value #tight\n", &opts),
+            "key: value #tight\n" // tight body preserved; only WS before `#` is normalized (already one)
+        );
+        assert_eq!(
+            format_yaml("a: 1  # first\nb: 2     # second\n", &opts),
+            "a: 1 # first\nb: 2 # second\n"
+        );
+        // Standalone comment at line start: pass through.
+        assert_eq!(
+            format_yaml("# standalone\nkey: value\n", &opts),
+            "# standalone\nkey: value\n"
+        );
+    }
+
+    #[test]
+    fn rule_7_collapses_blank_line_runs() {
+        // Rule 7: interior runs collapse to one blank line; leading
+        // blank lines are stripped entirely.
+        let opts = YamlFormatOptions::default();
+        assert_eq!(format_yaml("a: 1\n\n\n\nb: 2\n", &opts), "a: 1\n\nb: 2\n");
+        assert_eq!(format_yaml("a: 1\n\nb: 2\n", &opts), "a: 1\n\nb: 2\n");
+        assert_eq!(format_yaml("\n\n\nkey: value\n", &opts), "key: value\n");
+        // Whitespace-only "blank" lines (stripped to empty by rule 10
+        // first) participate in the collapse.
+        assert_eq!(
+            format_yaml("a: 1\n   \n   \n   \nb: 2\n", &opts),
+            "a: 1\n\nb: 2\n"
+        );
+    }
+
+    #[test]
+    fn rule_2_sequence_indents_under_parent_key() {
+        // Rule 2: sequence items indent +2 from the parent key, never at
+        // the parent column. Carried by rule 1's depth formula (entry/item
+        // ancestors − 1) — verified here so the behavior is locked even if
+        // rule 1's implementation moves.
+        let opts = YamlFormatOptions::default();
+        assert_eq!(
+            format_yaml("categories:\n- foo\n- bar\n", &opts),
+            "categories:\n  - foo\n  - bar\n"
+        );
+        assert_eq!(
+            format_yaml("people:\n- name: Alice\n  age: 30\n- name: Bob\n", &opts),
+            "people:\n  - name: Alice\n    age: 30\n  - name: Bob\n"
+        );
+    }
+
+    #[test]
+    fn trailing_whitespace_stripped_per_line() {
+        // STYLE.md rule 10: trailing space + tab stripped from every
+        // line; CRLF preserved (rule applies only to space/tab, not
+        // `\r`); whitespace-only lines collapse to empty.
+        let opts = YamlFormatOptions::default();
+        assert_eq!(format_yaml("key: value   \n", &opts), "key: value\n");
+        assert_eq!(format_yaml("key: value\t\n", &opts), "key: value\n");
+        assert_eq!(format_yaml("a: 1\n   \nb: 2\n", &opts), "a: 1\n\nb: 2\n");
+        assert_eq!(format_yaml("   ", &opts), "\n");
     }
 }

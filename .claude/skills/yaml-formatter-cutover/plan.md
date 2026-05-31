@@ -9,8 +9,19 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 
 - **Phase 1 (shadow formatter):** in progress. 1.1 module skeleton
   landed (byte-passthrough stub); 1.2 STYLE.md relocated; 1.3
-  cross-validation harness landed with starter corpus; rule
-  implementations (1.4+) outstanding.
+  cross-validation harness landed with starter corpus; 1.4 rule 13
+  (trailing document newline); 1.5 rule 10 (strip trailing whitespace
+  per line); 1.6 rule 1 (canonical 2-space indent); 1.7 rule 2
+  (sequence indent — verified, no new code; rule 1 already canonicalizes
+  it) + rule 7 (blank-line collapse + leading-blank strip); 1.8 rule 8
+  (inline comment spacing, integrated into token walk; render pipeline
+  refactored to precompute per-line depths so rule 8's byte shifts
+  don't invalidate rule 1's offset lookup). Remaining: rules 3
+  (quote style), 4 (block scalar style — preserve, no code), 5 (flow
+  spacing), 6 (flow wrap on overflow), 9 (comment positions —
+  preserve, no code), 11 (empty scalars — preserve, no code), 12
+  (key order — preserve, no code). Active work: rules 3, 5, 6 (the
+  three remaining behavior-changing rules).
 - **Phase 2 (joint cutover):** not started, blocked on Phase 1.
 - **Phase 3 (hashpipe extension):** not started, blocked on Phase 2.
 
@@ -18,6 +29,110 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 
 _(Update as phases complete. Earliest entries on top.)_
 
+- **Phase 1.8 — rule 8 (inline comment spacing) + pipeline refactor.**
+  Added `walk_with_inline_comment_normalization` and
+  `is_ws_before_inline_comment` to
+  `crates/panache-formatter/src/formatter/yaml/document.rs`. During the
+  token walk, when a `WHITESPACE` token's contiguous-WS run ends with
+  a `YAML_COMMENT` AND the previous non-WHITESPACE token is not
+  `NEWLINE`, the WS is emitted as a single space. Standalone
+  comments (line-start) keep original surrounding WS. Rule 8 had to
+  run inside the token walk because line-level passes can't reliably
+  distinguish `#` inside quoted scalars from a comment indicator.
+  Since rule 8 changes byte counts after a line's first non-WS byte
+  (collapsing `   ` → ` `), the existing rule-1 implementation's
+  CST-offset lookup (`line_start + trimmed_start`) would no longer
+  map to CST. Refactored: `precompute_line_depths` walks
+  `root.text()` line-by-line and computes the canonical depth per
+  CST line up front; `apply_canonical_indents` iterates the
+  (post-rule-8) buffer in lockstep — rule 8 preserves `\n` positions,
+  so the line index alignment holds. Five new corpus cases under
+  `tests/fixtures/yaml_corpus/comments/`:
+  `inline_loose_spacing`, `inline_tight_spacing`, `multiple_inline`,
+  `nested_inline`, `standalone_above_key`. One new unit test in
+  `yaml.rs`. STYLE.md rule 8 amended with the inline/standalone
+  distinction and the in-walk implementation note. yaml.rs status
+  block bumped to 1.8. No live-pipeline changes.
+- **Phase 1.7 — rule 7 (blank-line collapse) + rule 2 verification.**
+  Added `collapse_blank_line_runs` to
+  `crates/panache-formatter/src/formatter/yaml/document.rs::render`,
+  applied after rule 10 (so whitespace-only "blank" lines participate)
+  and before rule 13 (so trailing residue gets finalized to one `\n`).
+  Interior runs of multiple blank lines collapse to one; leading
+  blank lines are stripped entirely — symmetric with rule 13's
+  no-trailing-blank-lines invariant. Probed pretty_yaml first: it
+  also strips leading blanks (not just collapses), so STYLE.md
+  rule 7 was extended to call that out explicitly rather than
+  leaving "one max" ambiguous. Rule 2 (sequence items indented +2
+  from parent key) verified: rule 1's depth formula
+  (`2 * (entry/item ancestors − 1)`) already canonicalizes
+  same-column inputs (`categories:\n- foo` → `categories:\n  - foo`)
+  because the `-` sits inside two entry/item ancestors. No new code
+  for rule 2 — three corpus cases plus a unit test lock the
+  behavior. Four new corpus cases under
+  `tests/fixtures/yaml_corpus/blank_lines/`
+  (`triple_blank_collapses`, `multiple_runs`, `single_blank_preserved`,
+  `whitespace_only_blanks_collapse`, `leading_blank_run`) and three
+  under `sequences/` (`parent_column_dashes`, `nested_parent_column`,
+  `sequence_of_mappings_parent_column`). Two new unit tests in
+  `yaml.rs`. yaml.rs status block bumped to 1.7. No live-pipeline
+  changes.
+- **Phase 1.6 — rule 1 (canonical 2-space indent).** Added
+  `canonicalize_line_indents` + `canonical_indent_depth` to
+  `crates/panache-formatter/src/formatter/yaml/document.rs`. Strategy:
+  walk tokens to build a raw output buffer (byte-lossless), then
+  line-rewrite leading whitespace per `2 * (entry/item ancestor
+  count − 1)` for each line's first non-WS byte (looked up against
+  the CST via `token_at_offset`). Run before rule 10 + rule 13.
+  Tab-indented input is rejected by the parser outright — no
+  formatter concern. Block scalar (`|`/`>`) interior lines are
+  detected (offset > scalar_start, multi-line scalar text starting
+  with the indicator) and pass through verbatim because the scalar
+  is one multi-line `YAML_SCALAR` token; proper canonicalization
+  needs a real block-scalar renderer (deferred — added as an open
+  question below and noted in STYLE.md rule 1). Four new corpus
+  cases under `tests/fixtures/yaml_corpus/indent/`:
+  `nested_mapping_4sp`, `triple_nested_4sp`, `sequence_in_mapping_4sp`,
+  `sequence_of_mappings_canonical` (the canonical sequence-of-mappings
+  case earns its keep as a structural shape stressor even though it
+  doesn't reshape indent). Two new unit tests covering the nested
+  collapse cases and the block-scalar passthrough. STYLE.md rule 1
+  amended with the depth formula and the block-scalar limitation;
+  yaml.rs status block bumped to 1.6. No live-pipeline changes.
+- **Phase 1.5 — rule 10 (strip trailing whitespace per line).** Added
+  `strip_trailing_whitespace_per_line` to
+  `crates/panache-formatter/src/formatter/yaml/document.rs::render`,
+  applied before rule 13. Strips ASCII space + tab from every line;
+  leaves `\r` so CRLF round-trips. Applies uniformly — including
+  inside `|`/`>` block scalars, where YAML semantically pins trailing
+  spaces as content. Matches pretty_yaml's behavior (probed before
+  implementing); STYLE.md rule 10 amended to note the deliberate
+  semantic trade. Six new corpus cases under
+  `tests/fixtures/yaml_corpus/`: `whitespace/{trailing_spaces_on_value,
+  whitespace_only_blank_line, comment_trailing_spaces, trailing_tab,
+  literal_block_trailing}.yaml` plus `document/whitespace_only.yaml`
+  (3 ASCII spaces, no newline — resolves the rule-13 era divergence
+  for whitespace-only input). Files written via `printf` because
+  the Write tool's hook strips per-line trailing whitespace. One new
+  unit test in `yaml.rs` covering the four shapes. Workspace test
+  suite still green. No live-pipeline changes.
+- **Phase 1.4 — rule 13 (trailing document newline).** Added
+  `normalize_trailing_newline` to
+  `crates/panache-formatter/src/formatter/yaml/document.rs::render`:
+  every successfully-parsed document now ends with exactly one `\n`
+  (zero → add; many → collapse). Verified the in-tree parser
+  preserves trailing newlines byte-for-byte across the
+  zero/one/many cases — resolved the
+  "lossless parser preservation of trailing newline" open question
+  below. Added three corpus cases under
+  `tests/fixtures/yaml_corpus/document/`
+  (`empty.yaml` (0 bytes), `missing_trailing_newline.yaml`,
+  `multiple_trailing_newlines.yaml`) plus three new unit tests in
+  `yaml.rs`. Whitespace-only inputs (e.g. `"   "`) are still a
+  divergence — pretty_yaml canonicalizes those to `"\n"`; resolves
+  once rule 10 (strip per-line trailing whitespace) lands.
+  STYLE.md rule 13 footnote updated to note cross-validation;
+  yaml.rs status block bumped to 1.4. No live-pipeline changes.
 - **Phase 1.3 — cross-validation harness.** Added
   `crates/panache-formatter/tests/yaml_cross_validation.rs`, which
   discovers every `*.yaml` under
@@ -289,8 +404,21 @@ Add cases under
   but the formatter may force it (rule 4 requires distinguishing
   `|` / `>` / `'…'` / `"…"` styles per-scalar). Decide before Phase
   1.1 lands whether to do this preemptively or reactively.
-- **Lossless parser preservation of trailing newline.** Rule 13 pins
-  the formatter output (always one `\n` at EOF) but the in-tree
-  parser must round-trip the trailing newline byte-for-byte (zero,
-  one, or many) so the formatter has a deterministic input signal.
-  Verify in Phase 1.1.
+- ~~**Lossless parser preservation of trailing newline.**~~
+  Resolved in Phase 1.4. The parser round-trips zero/one/many
+  trailing newlines byte-for-byte (verified by probe; the formatter
+  applies rule 13 on top in `document::render`).
+- **Block-scalar interior re-indent.** Rule 1's line-rewrite
+  approach treats each block scalar (`|`/`>`) as one multi-line
+  `YAML_SCALAR` token and preserves its interior verbatim. That
+  keeps parity on already-canonical block scalars but diverges from
+  pretty_yaml when the input uses non-canonical indent (e.g. 4-space
+  inside a literal block re-flows to 2-space under pretty_yaml). Two
+  paths to fix: (a) lift the indent-indicator and content lines into
+  separate CST tokens parser-side (cleanest, but a real parser
+  change), or (b) keep the token shape and have the formatter
+  re-indent the scalar text bytes during rule 1, using the
+  block-scalar header to compute the canonical indent. Option (b) is
+  smaller and likely the right Phase 1.7+ move. Picked up when the
+  formatter starts caring about non-canonical block-scalar inputs
+  (no urgent corpus pressure yet).
