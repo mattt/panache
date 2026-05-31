@@ -8,17 +8,18 @@
 //!
 //! **Not wired into the live formatting pipeline.** Until the joint
 //! cutover lands (Phase 2), live YAML output still routes through
-//! [`crate::yaml_engine`] → `pretty_yaml`. This module exists to be
-//! cross-validated against pretty_yaml on a corpus by the harness in
-//! `crates/panache-formatter/tests/yaml_cross_validation.rs` (lands
-//! in Phase 1.3). See the
+//! [`crate::yaml_engine`] → `pretty_yaml`. This module is
+//! cross-validated against pretty_yaml on a corpus by
+//! `crates/panache-formatter/tests/yaml_cross_validation.rs`. See
 //! `.claude/skills/yaml-formatter-cutover/SKILL.md` for scope.
 //!
-//! Phase 1.1 status: skeleton only. The dispatcher walks the CST and
-//! emits every token's source byte verbatim, which is byte-lossless
-//! but applies none of the style rules — the cross-validation harness
-//! will surface that as "every case diverges from pretty_yaml" until
-//! the per-container renderers land in 1.2+.
+//! Phase 1.3 status: cross-validation harness landed. The dispatcher
+//! still walks the CST and emits every token's source byte verbatim
+//! (byte-lossless, no style rules applied yet), so the corpus is
+//! currently seeded only with trivially-canonical inputs that
+//! round-trip identically through pretty_yaml's defaults. As the
+//! per-container renderers land, real frontmatter and rule-exercising
+//! stressors graduate into the corpus.
 
 #[path = "yaml/block_map.rs"]
 mod block_map;

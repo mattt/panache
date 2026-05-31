@@ -9,7 +9,8 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 
 - **Phase 1 (shadow formatter):** in progress. 1.1 module skeleton
   landed (byte-passthrough stub); 1.2 STYLE.md relocated; 1.3
-  (cross-validation harness) outstanding.
+  cross-validation harness landed with starter corpus; rule
+  implementations (1.4+) outstanding.
 - **Phase 2 (joint cutover):** not started, blocked on Phase 1.
 - **Phase 3 (hashpipe extension):** not started, blocked on Phase 2.
 
@@ -17,6 +18,27 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 
 _(Update as phases complete. Earliest entries on top.)_
 
+- **Phase 1.3 — cross-validation harness.** Added
+  `crates/panache-formatter/tests/yaml_cross_validation.rs`, which
+  discovers every `*.yaml` under
+  `crates/panache-formatter/tests/fixtures/yaml_corpus/` and, per
+  case, asserts (a) `format_yaml(input) == pretty_yaml::format_text(input)`
+  with options bridged the same way `yaml_engine.rs` bridges them
+  (`print_width` ← `line_width`, `prose_wrap` ← `wrap`, everything
+  else at pretty_yaml defaults) and (b) `format_yaml(format_yaml(x)) ==
+  format_yaml(x)`. Failures accumulate into one panic so a batch of
+  red cases is visible at once. Seeded the corpus with 8 trivially-
+  canonical inputs (simple/two-key/nested mappings, top-level + nested
+  sequences, leading comment, short flow sequence, doc-start marker)
+  that round-trip through pretty_yaml's defaults — chosen so the
+  Phase 1.1 byte-passthrough stub passes parity and idempotency
+  today. The plan's Phase 1.3 "corpus seeding" intent (real
+  frontmatter extracts, hand-picked stressors for flow overflow /
+  anchors / multi-line scalars) deferred to land alongside the rule
+  implementations that make each case pass — adding them now would
+  just enumerate divergences, which is exactly what the
+  yaml-formatter rule forbids. yaml.rs module doc-comment updated to
+  reflect the 1.3 status. No live-pipeline changes.
 - **Phase 1.2 — STYLE.md relocation.** Moved the 13-rule style spec
   out of this plan into
   `crates/panache-formatter/src/formatter/yaml/STYLE.md` (canonical

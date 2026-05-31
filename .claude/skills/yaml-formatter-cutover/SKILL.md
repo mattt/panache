@@ -26,13 +26,17 @@ instead. The two skills share parser code but own different concerns.
 
 ## Current state
 
-Phase 1 not yet started. The live YAML path still goes through
+Phase 1 in progress. 1.1 (module skeleton, byte-passthrough stub),
+1.2 (STYLE.md relocation), and 1.3 (cross-validation harness with
+starter corpus) have landed. Rule implementations (1.4+) outstanding.
+The live YAML path still goes through
 `crates/panache-formatter/src/yaml_engine.rs` → `pretty_yaml::format_text`,
 with the host CST carrying the legacy `yaml_parser` shape from
 `crates/panache-parser/src/syntax/yaml.rs`. The in-tree parser
 (`crates/panache-parser/src/parser/yaml/`) is fully event-parity green
 against yaml-test-suite (308 passes_now, 94 error_contract_ok, both
-`fails_needs_*` buckets empty) but has no formatter consumer.
+`fails_needs_*` buckets empty); the in-tree formatter consumes its CST
+but is byte-passthrough until per-container renderers land.
 
 The plan lives in [`plan.md`](plan.md) alongside this file. Treat it as
 the authoritative phasing reference; update its "what landed" block as
