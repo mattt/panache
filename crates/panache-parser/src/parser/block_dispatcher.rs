@@ -709,6 +709,21 @@ impl BlockParser for ListParser {
         if indent_cols >= 4 && !ctx.in_list {
             return None;
         }
+        if ctx.in_list
+            && let Some(list_indent) = ctx.list_indent_info
+            && indent_cols >= list_indent.content_col + 4
+            && marker_match.spaces_after_cols == 0
+            && trim_end_newlines(after_marker_text).is_empty()
+        {
+            // Empty marker indented 4+ past the parent's content column:
+            // pandoc + CommonMark treat this as paragraph continuation, not
+            // a nested list. Parsing it as a nested empty bullet causes a
+            // formatter idempotency loss (the normalized 2-space indent
+            // would re-parse as a setext heading underline). Non-empty
+            // markers keep the looser "user-friendly" nested-list
+            // recognition for now.
+            return None;
+        }
 
         let nested_marker = is_content_nested_bullet_marker(
             content,

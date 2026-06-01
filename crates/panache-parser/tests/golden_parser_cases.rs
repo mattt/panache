@@ -490,6 +490,7 @@ golden_test_cases!(
     list_item_same_line_blockquote_marker_pandoc,
     list_bullet_outdent_after_blank_no_outer_list,
     list_marker_indent_4_below_content_col,
+    list_empty_marker_indent_four_past_content_col,
     list_orphan_indent4_marker_after_blank_becomes_codeblock,
     list_mixed_bullets_commonmark,
     list_mixed_bullets_pandoc,
