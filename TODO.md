@@ -898,7 +898,7 @@ for initial implementation.
 
 - [x] Extension: `hard_line_breaks` - Newline = `<br>` (non-default)
 - [ ] Extension: `ignore_line_breaks` - Ignore single newlines (non-default)
-- [ ] Extension: `east_asian_line_breaks` - Smart line breaks for CJK
+- [x] Extension: `east_asian_line_breaks` - Smart line breaks for CJK
       (non-default)
 
 #### Non-Default: GitHub/CommonMark
