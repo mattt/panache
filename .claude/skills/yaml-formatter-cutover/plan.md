@@ -7,49 +7,64 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 
 ## Status
 
-- **Phase 1 (shadow formatter):** in progress. 1.1 module skeleton
-  landed (byte-passthrough stub); 1.2 STYLE.md relocated; 1.3
-  cross-validation harness landed with starter corpus; 1.4 rule 13
-  (trailing document newline); 1.5 rule 10 (strip trailing whitespace
-  per line); 1.6 rule 1 (canonical 2-space indent); 1.7 rule 2
-  (sequence indent — verified, no new code; rule 1 already canonicalizes
-  it) + rule 7 (blank-line collapse + leading-blank strip); 1.8 rule 8
-  (inline comment spacing, integrated into token walk; render pipeline
-  refactored to precompute per-line depths so rule 8's byte shifts
-  don't invalidate rule 1's offset lookup); 1.9 rule 5 (canonical flow
-  spacing; token walk refactored to recursive node walk so flow
-  containers can take over emission for their subtrees); 1.10 rule 6
-  (overflow wrap: re-parse the post-indent buffer, walk top-level flow
-  containers in reverse byte order, replace overflowing single-line
-  forms with canonical multi-line — items at parent_content_column + 2,
-  closing bracket at parent_content_column; multi-line input was
-  parked on the parser side, now unblocked by 1.14); 1.11 rule 3
-  (convert single-quoted scalars to double-quoted when the de-escaped
-  content has none of `\`, `'`, `"`, or ASCII control chars; plain
-  stays plain; double stays double); 1.12 preserve-rule lockdown
-  (rules 4 block-scalar style, 9 comment positions, 11 empty scalars,
-  12 key order — no formatter code, locked in by corpus + unit tests
-  against pretty_yaml); 1.13 real-frontmatter harvest (six
-  representative cases from `tests/fixtures/cases/` + `docs/`) which
-  surfaced a spec gap → added rule 14 (collapse multi-space runs
-  between block structural indicators `:` / `-` and inline content to
-  one space; trailing-only runs deferred to rule 10); 1.14 multi-line
-  flow round-trip (parser-side: relax
-  `check_flow_continuation_indent` to exempt the line whose first
-  non-WS byte is the flow's matching closing indicator — matches
-  libyaml/pandoc/yq; formatter-side:
-  `canonical_indent_depth` returns None on continuation lines of a
-  multi-line flow ancestor so rule 1 preserves rule 6's wrap
-  indentation across passes). The spec is now 14 rules with corpus +
-  unit coverage. Phase 1 ready for exit gate review (all corpus cases
-  parity-pass and round-trip).
-- **Phase 2 (joint cutover):** not started, blocked on Phase 1.
+- **Phase 1 (shadow formatter):** in progress. 1.1–1.14 as previously
+  recorded; 1.15 extends rule 1 to canonicalize multi-line plain /
+  single-quoted / double-quoted scalar continuation lines at
+  `2 * entry/item depth` (the value column), surfaced by a Phase 2
+  readiness probe that compared in-tree vs pretty_yaml on every host
+  fixture's YAML frontmatter and hashpipe payloads. Remaining gap
+  before Phase 2: **plain-scalar overflow wrap** (rule 6's analog for
+  long single-line plain scalars in block-map values — when the value
+  pushes its line past `line_width`, wrap onto multiple lines with
+  `depth * 2`-column continuation indent). All three remaining
+  `input.* hashpipe` divergences in the readiness probe are this
+  shape; their `expected.*` files already match in-tree output, so the
+  blocker is producing the wrapped output from unwrapped input.
+- **Phase 2 (joint cutover):** not started, blocked on Phase 1.15b
+  (plain-scalar overflow wrap). Probe results: 14/14 expected
+  frontmatter, 15/15 input frontmatter, 35/35 expected hashpipe, 18/21
+  input hashpipe — last three are the wrap gap. Once that lands, the
+  cutover commit shouldn't shift any host golden fixture.
 - **Phase 3 (hashpipe extension):** not started, blocked on Phase 2.
 
 ## What landed since drafting
 
 _(Update as phases complete. Earliest entries on top.)_
 
+- **Phase 1.15 — multi-line scalar continuation canonicalization
+  (rule 1 extension).** Probe-driven: a one-shot survey under
+  `crates/panache-formatter/tests/yaml_fixture_survey.rs` (now
+  removed) ran `format_yaml` and `pretty_yaml::format_text` over the
+  YAML frontmatter and hashpipe payloads of every fixture under
+  `tests/fixtures/cases/`. Result: 7/35 expected-hashpipe and 8/21
+  input-hashpipe divergences clustered around multi-line plain /
+  single-quoted / double-quoted scalars whose continuation lines lost
+  their indent because rule 1's depth formula
+  (`entry/item ancestors − 1`) returned 0 for the continuation line's
+  containing entry. Fix: extend `canonical_indent_depth` in
+  `crates/panache-formatter/src/formatter/yaml/document.rs` to handle
+  multi-line `YAML_SCALAR` continuation lines explicitly — block
+  scalars (`|`/`>`) still preserve verbatim (no real renderer yet);
+  plain / single- / double-quoted continuation lines indent at
+  `entry/item ancestors * 2` (one level deeper than the default; the
+  scalar belongs to the value side of the entry, so its column is the
+  value column rather than the key column). Five new corpus cases
+  under `tests/fixtures/yaml_corpus/multiline_scalars/`
+  (`plain_continuation_canonical`, `double_quoted_continuation_canonical`,
+  `single_quoted_continuation_canonical`,
+  `double_quoted_continuation_one_space`,
+  `nested_value_continuation`). Two new unit tests in `yaml.rs`
+  (`rule_1_canonicalizes_multiline_plain_scalar_continuation`,
+  `rule_1_canonicalizes_multiline_quoted_scalar_continuation`).
+  STYLE.md rule 1 amended with the value-column note. The probe
+  results after this fix: 14/14 expected frontmatter, 15/15 input
+  frontmatter, 35/35 expected hashpipe, 18/21 input hashpipe parity.
+  The remaining 3 input-hashpipe gaps are all long single-line plain
+  scalars that pretty_yaml wraps and the in-tree formatter leaves
+  untouched — these are the Phase 2 blocker (plain-scalar overflow
+  wrap, rule 6's analog for block-map scalar values). The probe and
+  CST shape probes were one-shot tools and were removed after the fix
+  landed. No live-pipeline changes.
 - **Phase 1.14 — multi-line flow round-trip (parser + formatter).**
   Two coupled changes that unblock the "multi-line flow input is
   sticky" behavior parked in Phase 1.10. Parser-side: relaxed

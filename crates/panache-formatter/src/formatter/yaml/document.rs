@@ -369,14 +369,36 @@ fn canonical_indent_depth(root: &SyntaxNode, offset: usize) -> Option<usize> {
         TokenAtOffset::None => return Some(0),
     };
 
-    if token.kind() == SyntaxKind::YAML_SCALAR {
-        let text = token.text();
-        let starts_block_scalar = text.starts_with('|') || text.starts_with('>');
-        if starts_block_scalar && text.contains('\n') {
-            let scalar_start = usize::from(token.text_range().start());
-            if offset > scalar_start {
+    if token.kind() == SyntaxKind::YAML_SCALAR && token.text().contains('\n') {
+        // Multi-line scalar continuation: block scalars (`|`/`>`) bake
+        // their interior indent into the single `YAML_SCALAR` token —
+        // proper canonicalization needs a real block-scalar renderer, so
+        // preserve verbatim. Plain / single- / double-quoted multi-line
+        // scalars have their continuation lines canonicalized to the
+        // parent value's content column (depth * 2 spaces — one level
+        // deeper than rule 1's default formula, matching pretty_yaml's
+        // output for multi-line values). The first line of the scalar
+        // doesn't hit this carve-out: when the scalar is a value, the
+        // line's first non-WS byte is the key (offset < scalar_start);
+        // when the scalar opens the line, offset == scalar_start.
+        let scalar_start = usize::from(token.text_range().start());
+        if offset > scalar_start {
+            let text = token.text();
+            if text.starts_with('|') || text.starts_with('>') {
                 return None;
             }
+            let mut entry_item_ancestors = 0usize;
+            let mut node = token.parent();
+            while let Some(n) = node {
+                if matches!(
+                    n.kind(),
+                    SyntaxKind::YAML_BLOCK_MAP_ENTRY | SyntaxKind::YAML_BLOCK_SEQUENCE_ITEM
+                ) {
+                    entry_item_ancestors += 1;
+                }
+                node = n.parent();
+            }
+            return Some(entry_item_ancestors);
         }
     }
 

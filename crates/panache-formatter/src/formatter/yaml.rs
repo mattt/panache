@@ -13,8 +13,11 @@
 //! `crates/panache-formatter/tests/yaml_cross_validation.rs`. See
 //! `.claude/skills/yaml-formatter-cutover/SKILL.md` for scope.
 //!
-//! Phase 1.13 status: cross-validation harness live; rules 1
-//! (canonical 2-space indent driven by entry/item nesting depth),
+//! Phase 1.15 status: cross-validation harness live; rules 1
+//! (canonical 2-space indent driven by entry/item nesting depth;
+//! multi-line plain / single-quoted / double-quoted scalar
+//! continuation lines indent one level deeper at the value column —
+//! Phase 1.15 extension surfaced by the Phase 2 readiness probe),
 //! 2 (sequence items indent +2 from parent key — carried by rule 1's
 //! depth math, no separate code), 3 (prefer double-quoted over
 //! single-quoted unless the de-escaped content has `\`, `'`, `"`, or
@@ -158,6 +161,48 @@ mod tests {
         let opts = YamlFormatOptions::default();
         let input = "key: |\n  line one\n  line two\n";
         assert_eq!(format_yaml(input, &opts), input);
+    }
+
+    #[test]
+    fn rule_1_canonicalizes_multiline_plain_scalar_continuation() {
+        // Already-multi-line plain scalar: continuation lines indent at
+        // `depth * 2` (parent value's content column). 1-space input
+        // gets rewritten to the canonical 2-space; non-canonical 4-space
+        // collapses back to 2-space. Block-scalar carve-out (handled
+        // separately) keeps `|`/`>` interiors verbatim.
+        let opts = YamlFormatOptions::default();
+        assert_eq!(
+            format_yaml("k: line one\n line two\n", &opts),
+            "k: line one\n  line two\n"
+        );
+        assert_eq!(
+            format_yaml("k: line one\n    line two\n", &opts),
+            "k: line one\n  line two\n"
+        );
+        // Nested: depth-2 entry, continuation indent at column 4.
+        assert_eq!(
+            format_yaml("a:\n  b: line one\n   line two\n", &opts),
+            "a:\n  b: line one\n    line two\n"
+        );
+    }
+
+    #[test]
+    fn rule_1_canonicalizes_multiline_quoted_scalar_continuation() {
+        // Same depth formula for double- and single-quoted multi-line
+        // scalars; the surrounding `"…"` / `'…'` sits on the first /
+        // last line, but the continuation indent is governed by rule 1.
+        let opts = YamlFormatOptions::default();
+        assert_eq!(
+            format_yaml("k: \"line one\n line two\"\n", &opts),
+            "k: \"line one\n  line two\"\n"
+        );
+        assert_eq!(
+            format_yaml("k: 'line one\n line two'\n", &opts),
+            "k: 'line one\n  line two'\n"
+        );
+        // Already-canonical 2-space is a no-op.
+        let canonical = "k: \"line one\n  line two\"\n";
+        assert_eq!(format_yaml(canonical, &opts), canonical);
     }
 
     #[test]
