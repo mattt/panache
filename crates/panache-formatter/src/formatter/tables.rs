@@ -7,10 +7,10 @@ use rowan::NodeOrToken;
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
-/// Default indent (in spaces) for table types that still self-indent at the top
-/// level (pipe, simple, multiline). Grid tables instead honor the container
-/// indent threaded from the dispatcher so a top-level grid sits at column 0 --
-/// pandoc rejects an indented `+---+` border. See `format_grid_table`.
+/// Default indent (in spaces) for table types that self-indent at the top level
+/// (pipe, simple, multiline). Grid tables instead honor the container indent
+/// threaded from the dispatcher so a top-level grid sits at column 0 -- pandoc
+/// rejects an indented `+---+` border. See `format_grid_table`.
 const TABLE_BLOCK_INDENT: usize = 2;
 
 fn indent_table_block(block: &str, indent: usize) -> String {
@@ -618,7 +618,7 @@ fn calculate_grid_column_widths(rows: &[Vec<String>]) -> Vec<usize> {
 }
 
 /// Format a pipe table with consistent alignment and padding
-pub fn format_pipe_table(node: &SyntaxNode, config: &Config) -> String {
+pub fn format_pipe_table(node: &SyntaxNode, config: &Config, indent: usize) -> String {
     let table_data = extract_pipe_table_data(node, config);
     let mut output = String::new();
 
@@ -714,7 +714,12 @@ pub fn format_pipe_table(node: &SyntaxNode, config: &Config) -> String {
         output.push_str(&formatted_caption);
         output.push('\n');
     }
-    indent_table_block(&output, TABLE_BLOCK_INDENT)
+    let block_indent = if indent == 0 {
+        TABLE_BLOCK_INDENT
+    } else {
+        indent
+    };
+    indent_table_block(&output, block_indent)
 }
 
 // Grid Table Formatting
