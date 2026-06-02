@@ -13,7 +13,7 @@
 //! `crates/panache-formatter/tests/yaml_cross_validation.rs`. See
 //! `.claude/skills/yaml-formatter-cutover/SKILL.md` for scope.
 //!
-//! Phase 1.15 status: cross-validation harness live; rules 1
+//! Phase 1.15b status: cross-validation harness live; rules 1
 //! (canonical 2-space indent driven by entry/item nesting depth;
 //! multi-line plain / single-quoted / double-quoted scalar
 //! continuation lines indent one level deeper at the value column —
@@ -29,14 +29,16 @@
 //! past `line_width`, rewrite each item onto its own line at the
 //! parent entry/item's content column + 2, with trailing comma and a
 //! standalone closing bracket; opening bracket stays on the key
-//! line), 7 (collapse blank-line runs; strip leading blanks
-//! entirely), 8 (one space before inline `#` comments), 10 (strip
-//! trailing whitespace per line), 13 (exactly one trailing `\n` at
-//! EOF), and 14 (collapse runs of whitespace between block
-//! structural indicators — `:` after a block-map key, `-` after a
-//! block-sequence marker — and inline content on the same line to a
-//! single space; trailing-only runs are left for rule 10)
-//! implemented in [`document`]. All behavior-changing rules are
+//! line; plus the Phase 1.15b plain-scalar analog for block-map
+//! values — greedy word-wrap at `depth * 2` continuation column,
+//! quoted/block/decorated/seq-item scalars skipped), 7 (collapse
+//! blank-line runs; strip leading blanks entirely), 8 (one space
+//! before inline `#` comments), 10 (strip trailing whitespace per
+//! line), 13 (exactly one trailing `\n` at EOF), and 14 (collapse
+//! runs of whitespace between block structural indicators — `:`
+//! after a block-map key, `-` after a block-sequence marker — and
+//! inline content on the same line to a single space; trailing-only
+//! runs are left for rule 10) implemented in [`document`]. All behavior-changing rules are
 //! live; preserve rules 4 (block-scalar style), 9 (comment
 //! positions), 11 (empty scalars), and 12 (key order) are locked in
 //! by corpus + unit tests with no formatter code (they cross-validate
@@ -48,7 +50,10 @@
 //! content; conversion on keys + flow items), rule-5 flow-spacing
 //! cases, rule-6 overflow-wrap cases (depths 0/1/2, block-sequence
 //! parent shifts items +4, sequence-of-maps keeps nested flow
-//! canonical, just-at-80 boundary), rule-7 blank-line cases, rule-8
+//! canonical, just-at-80 boundary; plain-scalar overflow in
+//! block-map values at depths 1 and 2, multi-entry maps with one
+//! overflowing entry, already-wrapped round-trip, short non-overflow,
+//! quoted + block scalars preserved), rule-7 blank-line cases, rule-8
 //! inline-comment cases, rule-4 literal/folded + chomping indicator
 //! cases, rule-9 between-keys / between-seq-items / trailing-comment
 //! cases, rule-11 empty-scalar cases (bare, multiple, with inline
@@ -522,6 +527,67 @@ mod tests {
             format_yaml("items:\n  -   \n  - foo\n", &opts),
             "items:\n  -\n  - foo\n"
         );
+    }
+
+    #[test]
+    fn rule_6_plain_scalar_wraps_at_block_map_value() {
+        // Plain-scalar overflow wrap (rule 6 analog for block-map values).
+        // Continuation indent = depth * 2 (the value column, matching
+        // rule 1's multi-line scalar continuation rule so wrap output
+        // round-trips without further reshaping).
+        let opts = YamlFormatOptions::default();
+        // Top-level (depth 1) → continuation col 2.
+        let input = "tbl-cap: This is a long caption that should wrap onto multiple lines because it exceeds the line width of eighty.\n";
+        let expected = "tbl-cap: This is a long caption that should wrap onto multiple lines because it\n  exceeds the line width of eighty.\n";
+        assert_eq!(format_yaml(input, &opts), expected);
+        // Nested (depth 2) → continuation col 4.
+        let nested = "outer:\n  inner: This is a nested long value that needs to wrap because of the line width limit.\n";
+        let nested_expected = "outer:\n  inner: This is a nested long value that needs to wrap because of the line\n    width limit.\n";
+        assert_eq!(format_yaml(nested, &opts), nested_expected);
+        // Already-wrapped input round-trips.
+        let already_wrapped = expected;
+        assert_eq!(format_yaml(already_wrapped, &opts), already_wrapped);
+    }
+
+    #[test]
+    fn rule_6_plain_scalar_wrap_skips_non_plain_and_short() {
+        // Quoted scalars never wrap (carry semantic intent + escape behavior).
+        // Block scalars (`|`/`>`) never wrap (carry semantics). Short
+        // values stay single-line.
+        let opts = YamlFormatOptions::default();
+        let quoted = "tbl-cap: \"This is a long quoted caption that should not wrap because quoted scalars are preserved verbatim by the YAML formatter\"\n";
+        assert_eq!(format_yaml(quoted, &opts), quoted);
+        let literal =
+            "tbl-cap: |\n  literal text that should not wrap regardless of line width hard stop\n";
+        assert_eq!(format_yaml(literal, &opts), literal);
+        let short = "tbl-cap: Short value\n";
+        assert_eq!(format_yaml(short, &opts), short);
+    }
+
+    #[test]
+    fn rule_6_plain_scalar_wrap_skips_inline_comment_and_decoration() {
+        // A value with an inline `# comment` after the scalar is skipped —
+        // wrapping the scalar alone would leave the comment dangling on
+        // the last wrapped line in pretty_yaml-incompatible ways, and the
+        // shape is rare enough that the conservative skip wins. Same for
+        // tag (`!!str`) and anchor (`&name`) decorations.
+        let opts = YamlFormatOptions::default();
+        let with_comment = "tbl-cap: This is a long value that would otherwise wrap onto multiple lines yes # cmt\n";
+        assert_eq!(format_yaml(with_comment, &opts), with_comment);
+        let with_tag = "tbl-cap: !!str This is a tagged long value that would otherwise wrap onto multiple lines yes\n";
+        assert_eq!(format_yaml(with_tag, &opts), with_tag);
+    }
+
+    #[test]
+    fn rule_6_plain_scalar_wrap_skips_block_sequence_value() {
+        // Block-sequence items are deferred: pretty_yaml's wrap-
+        // continuation column (parent content + 2) disagrees with rule 1's
+        // multi-line-continuation column (depth * 2), so pretty_yaml is
+        // not idempotent on that shape — we leave the input alone rather
+        // than match a non-idempotent reference.
+        let opts = YamlFormatOptions::default();
+        let seq = "outer:\n  - This is a long sequence item value that would otherwise wrap onto a second line\n";
+        assert_eq!(format_yaml(seq, &opts), seq);
     }
 
     #[test]

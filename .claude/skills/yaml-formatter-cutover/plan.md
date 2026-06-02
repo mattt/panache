@@ -7,30 +7,79 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 
 ## Status
 
-- **Phase 1 (shadow formatter):** in progress. 1.1–1.14 as previously
-  recorded; 1.15 extends rule 1 to canonicalize multi-line plain /
-  single-quoted / double-quoted scalar continuation lines at
-  `2 * entry/item depth` (the value column), surfaced by a Phase 2
-  readiness probe that compared in-tree vs pretty_yaml on every host
-  fixture's YAML frontmatter and hashpipe payloads. Remaining gap
-  before Phase 2: **plain-scalar overflow wrap** (rule 6's analog for
-  long single-line plain scalars in block-map values — when the value
-  pushes its line past `line_width`, wrap onto multiple lines with
-  `depth * 2`-column continuation indent). All three remaining
-  `input.* hashpipe` divergences in the readiness probe are this
-  shape; their `expected.*` files already match in-tree output, so the
-  blocker is producing the wrapped output from unwrapped input.
-- **Phase 2 (joint cutover):** not started, blocked on Phase 1.15b
-  (plain-scalar overflow wrap). Probe results: 14/14 expected
-  frontmatter, 15/15 input frontmatter, 35/35 expected hashpipe, 18/21
-  input hashpipe — last three are the wrap gap. Once that lands, the
-  cutover commit shouldn't shift any host golden fixture.
+- **Phase 1 (shadow formatter):** in progress. 1.1–1.15b as
+  previously recorded; 1.15b adds the plain-scalar overflow analog of
+  rule 6 — when a single-line plain scalar in a block-map value
+  pushes its line past `line_width`, greedy word-wrap onto
+  continuation lines indented at `depth * 2` (the value column,
+  matching rule 1's multi-line continuation indent so wrap output
+  round-trips). Quoted/block/decorated/seq-item scalars skip. Probe
+  results post-fix: 17/17 input + 16/16 expected frontmatter, 35/35
+  expected hashpipe, **20/21 input hashpipe** — the remaining gap
+  (`issue_194_idempotency_lsj_tbl_cap`) is the deliberate
+  trailing-space-vs-strip tradeoff governed by rule 10 (we strip a
+  one-char trailing space pretty_yaml keeps for fold-semantic
+  preservation), which already aligns with the host fixture's
+  expected output.
+- **Phase 2 (joint cutover):** unblocked. The cutover commit should
+  not shift any host golden fixture; both `yaml_parser` and
+  `pretty_yaml` come out together. Next concrete step: audit the
+  YAML CST kinds the host pipeline consumes (linter + LSP walks of
+  `SyntaxKind::YAML_*` nodes) against the in-tree parser's kind set
+  to confirm a no-op swap at `crates/panache-parser/src/syntax/yaml.rs`.
 - **Phase 3 (hashpipe extension):** not started, blocked on Phase 2.
 
 ## What landed since drafting
 
 _(Update as phases complete. Earliest entries on top.)_
 
+- **Phase 1.15b — plain-scalar overflow wrap (rule 6's block-map
+  analog).** Closes the last functional gap from the Phase 2 readiness
+  probe (18/21 → 20/21 input hashpipe parity). Added
+  `apply_plain_scalar_wrap` to
+  `crates/panache-formatter/src/formatter/yaml/document.rs::render`,
+  inserted between rule 6's flow wrap and rule 10's trailing-WS strip.
+  Strategy: re-parse the post-indent buffer, walk
+  `YAML_BLOCK_MAP_VALUE` nodes; for each value whose direct child is a
+  single-line plain `YAML_SCALAR` (skip quoted `'…'`/`"…"`, block
+  `|`/`>`, multi-line, or values decorated with tags / anchors /
+  aliases / inline comments / inside a block sequence), greedy
+  word-wrap the scalar onto continuation lines at `depth * 2`
+  (matching rule 1's multi-line continuation column so wrap output
+  round-trips). Multi-space runs that aren't break points stay
+  verbatim; a multi-space run that IS the break point is consumed
+  entirely by `\n + indent` (pretty_yaml leaves the leading char as a
+  trailing space to preserve YAML's plain-scalar fold semantics, but
+  rule 10 would strip it anyway, so consuming it here keeps pass-2
+  byte-stable — same family of trades against pretty_yaml's semantic
+  preservation as rule 10's stance). Block-sequence values are
+  deliberately deferred: pretty_yaml's wrap continuation there
+  (`parent_content_col + 2`) disagrees with rule 1's multi-line
+  continuation (`depth * 2`), so pretty_yaml itself fails idempotency
+  on that shape — picking one column without breaking pass-2
+  stability needs a spec decision we don't need today (no host fixture
+  exercises a long single-line plain scalar in a block sequence).
+  Seven new corpus cases under
+  `tests/fixtures/yaml_corpus/plain_wrap/`:
+  `simple_block_map_overflow` (top-level depth 1),
+  `nested_block_map_overflow` (depth 2 with col-4 continuation),
+  `multiple_entries_one_overflows` (two-entry map; only the long
+  entry wraps), `already_wrapped_round_trip` (pretty_yaml output fed
+  back; sticks unchanged), `non_overflow_stays_single_line`
+  (no wrap at width 80), `quoted_value_preserved` (long `"…"` stays),
+  `block_scalar_value_preserved` (long `|` stays). Four new unit
+  tests in `yaml.rs` (`rule_6_plain_scalar_wraps_at_block_map_value`,
+  `rule_6_plain_scalar_wrap_skips_non_plain_and_short`,
+  `rule_6_plain_scalar_wrap_skips_inline_comment_and_decoration`,
+  `rule_6_plain_scalar_wrap_skips_block_sequence_value`). STYLE.md
+  rule 6 amended with the plain-scalar overflow paragraph (greedy
+  wrap, depth*2 continuation, scope restrictions, multi-space
+  semantics) and the header note bumped to reference 1.15b. yaml.rs
+  status block bumped. No live-pipeline changes. The one remaining
+  input-hashpipe gap (`issue_194_idempotency_lsj_tbl_cap`,
+  `*clinicaltrial.csv*  data`) is the deliberate rule 10 strip vs
+  pretty_yaml fold-semantic preserve trade — host fixture already
+  expects our shape, so the cutover commit is now clear.
 - **Phase 1.15 — multi-line scalar continuation canonicalization
   (rule 1 extension).** Probe-driven: a one-shot survey under
   `crates/panache-formatter/tests/yaml_fixture_survey.rs` (now

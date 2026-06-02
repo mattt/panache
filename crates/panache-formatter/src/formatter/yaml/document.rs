@@ -6,7 +6,7 @@
 //! [`block_sequence`](super::block_sequence),
 //! [`flow`](super::flow), [`scalar`](super::scalar)).
 //!
-//! Phase 1.14 status: eight rules across the render pipeline. The CST
+//! Phase 1.15b status: eight rules across the render pipeline. The CST
 //! walk that builds `raw` is recursive (descends into nodes, emits
 //! tokens): it applies rule 8 (collapse whitespace before an inline
 //! `YAML_COMMENT` to one space — needs CST kind to distinguish `#` in
@@ -24,9 +24,14 @@
 //! containers in reverse byte order, replace overflowing single-line
 //! forms with canonical multi-line — items at
 //! `parent_content_column + 2`, closing bracket at
-//! `parent_content_column`); then rule 10 (strip trailing whitespace
-//! per line), rule 7 (collapse blank-line runs), and rule 13 (exactly
-//! one `\n` at EOF) run as line-level post-passes. Multi-line flow
+//! `parent_content_column`); then the Phase 1.15b plain-scalar wrap
+//! pass (analog of rule 6 for block-map values: greedy word-wrap of
+//! single-line plain scalars whose enclosing line exceeds
+//! `line_width`, with continuation lines at `depth * 2` so the wrap
+//! output round-trips through rule 1's multi-line continuation rule);
+//! then rule 10 (strip trailing whitespace per line), rule 7
+//! (collapse blank-line runs), and rule 13 (exactly one `\n` at EOF)
+//! run as line-level post-passes. Multi-line flow
 //! input now round-trips (parser accepts the closing-`]`/`}` at the
 //! parent block-map's indent; rule 6 leaves already-wrapped containers
 //! in place when they fit, or rewraps via `replace_range` when the
@@ -49,8 +54,9 @@ pub(super) fn render(root: &SyntaxNode, opts: &YamlFormatOptions) -> String {
     let depths = precompute_line_depths(root);
     let raw = walk_with_normalization(root);
     let indented = apply_canonical_indents(&raw, &depths);
-    let wrapped = apply_flow_wrap(indented, opts);
-    let stripped = strip_trailing_whitespace_per_line(wrapped);
+    let flow_wrapped = apply_flow_wrap(indented, opts);
+    let scalar_wrapped = apply_plain_scalar_wrap(flow_wrapped, opts);
+    let stripped = strip_trailing_whitespace_per_line(scalar_wrapped);
     let collapsed = collapse_blank_line_runs(stripped);
     normalize_trailing_newline(collapsed)
 }
@@ -676,4 +682,185 @@ fn parent_content_col(node: &SyntaxNode) -> usize {
     } else {
         canonical
     }
+}
+
+/// STYLE.md rule 6 (plain-scalar overflow analog): when a single-line
+/// plain scalar value in a block-map entry pushes its line past
+/// `opts.line_width`, wrap it across multiple lines. Continuation lines
+/// land at `depth * 2` (the value column — same indent the Phase 1.15
+/// multi-line-continuation rule uses, so a wrapped output round-trips
+/// without further reshaping).
+///
+/// Scope: block-map values only. Quoted (`'…'`, `"…"`) and block
+/// (`|`/`>`) scalars never wrap per the "Plain-scalar wrapping" section
+/// of `STYLE.md`. Already-multi-line scalars are skipped (rule 1's
+/// continuation pass handles them). Scalars in block sequences are
+/// skipped: pretty_yaml's wrap-continuation column there (parent
+/// content + 2) disagrees with rule 1's multi-line-continuation column
+/// (`depth * 2`), so pretty_yaml itself isn't idempotent on that shape
+/// and we defer it.
+///
+/// Inline comments and tag/anchor decorations on the value side cause
+/// the scalar to skip wrap — keeping the algorithm simple and matching
+/// pretty_yaml on the cases that actually appear in the corpus.
+///
+/// Implementation: re-parse the post-flow-wrap buffer, walk
+/// `YAML_BLOCK_MAP_VALUE` nodes, identify single-line plain scalars
+/// whose line exceeds `line_width`, and rewrite each scalar with
+/// `replace_range` (reverse byte order, so earlier offsets remain
+/// valid).
+fn apply_plain_scalar_wrap(buf: String, opts: &YamlFormatOptions) -> String {
+    let Some(tree) = panache_parser::parser::yaml::parse_yaml_tree(&buf) else {
+        return buf;
+    };
+
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for value_node in tree
+        .descendants()
+        .filter(|n| n.kind() == SyntaxKind::YAML_BLOCK_MAP_VALUE)
+    {
+        if has_block_seq_ancestor(&value_node) {
+            continue;
+        }
+        if value_has_inline_comment(&value_node) {
+            continue;
+        }
+        if value_has_decoration(&value_node) {
+            continue;
+        }
+        let Some(scalar) = value_node.children_with_tokens().find_map(|c| match c {
+            rowan::NodeOrToken::Token(t) if t.kind() == SyntaxKind::YAML_SCALAR => Some(t),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let text = scalar.text();
+        if text.starts_with('\'')
+            || text.starts_with('"')
+            || text.starts_with('|')
+            || text.starts_with('>')
+        {
+            continue;
+        }
+        if text.contains('\n') {
+            continue;
+        }
+        let depth = block_entry_depth(&value_node);
+        if depth == 0 {
+            continue;
+        }
+        let scalar_start = usize::from(scalar.text_range().start());
+        let scalar_end = usize::from(scalar.text_range().end());
+        let line_start = buf[..scalar_start].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let line_end = buf[scalar_end..]
+            .find('\n')
+            .map(|p| scalar_end + p)
+            .unwrap_or(buf.len());
+        if buf[line_start..line_end].chars().count() <= opts.line_width {
+            continue;
+        }
+        let scalar_col = buf[line_start..scalar_start].chars().count();
+        let indent = depth * 2;
+        let wrapped = wrap_plain_scalar_text(text, scalar_col, indent, opts.line_width);
+        if wrapped == text {
+            continue;
+        }
+        edits.push((scalar_start, scalar_end, wrapped));
+    }
+    edits.sort_by_key(|(s, _, _)| *s);
+    let mut out = buf;
+    for (start, end, replacement) in edits.into_iter().rev() {
+        out.replace_range(start..end, &replacement);
+    }
+    out
+}
+
+fn has_block_seq_ancestor(value_node: &SyntaxNode) -> bool {
+    let mut p = value_node.parent();
+    while let Some(n) = p {
+        if n.kind() == SyntaxKind::YAML_BLOCK_SEQUENCE_ITEM {
+            return true;
+        }
+        p = n.parent();
+    }
+    false
+}
+
+fn value_has_inline_comment(value_node: &SyntaxNode) -> bool {
+    value_node
+        .children_with_tokens()
+        .any(|c| matches!(c, rowan::NodeOrToken::Token(t) if t.kind() == SyntaxKind::YAML_COMMENT))
+}
+
+fn value_has_decoration(value_node: &SyntaxNode) -> bool {
+    value_node.children_with_tokens().any(|c| {
+        matches!(
+            c,
+            rowan::NodeOrToken::Token(t)
+                if matches!(t.kind(), SyntaxKind::YAML_TAG | SyntaxKind::YAML_ANCHOR | SyntaxKind::YAML_ALIAS)
+        )
+    })
+}
+
+fn block_entry_depth(value_node: &SyntaxNode) -> usize {
+    let mut count = 0usize;
+    let mut p = value_node.parent();
+    while let Some(n) = p {
+        if matches!(
+            n.kind(),
+            SyntaxKind::YAML_BLOCK_MAP_ENTRY | SyntaxKind::YAML_BLOCK_SEQUENCE_ITEM
+        ) {
+            count += 1;
+        }
+        p = n.parent();
+    }
+    count
+}
+
+/// Greedy word-wrap of a plain scalar's text. `start_col` is the column
+/// where the scalar's first character sits on its starting line;
+/// `indent` is the canonical continuation column. Multi-space runs that
+/// are not break points are preserved verbatim (so `x  milk` mid-value
+/// keeps its double space). A multi-space run that IS the break point is
+/// consumed entirely by the `\n` + continuation indent — pretty_yaml
+/// keeps the leading character of the run as a trailing space, but
+/// rule 10 would strip it anyway, and consuming the run here keeps
+/// pass-2 output byte-stable.
+fn wrap_plain_scalar_text(text: &str, start_col: usize, indent: usize, width: usize) -> String {
+    let mut out = String::new();
+    let mut col = start_col;
+    let indent_str = " ".repeat(indent);
+    let mut rest = text;
+    let mut first_word = true;
+    while !rest.is_empty() {
+        let ws_end = rest
+            .find(|c: char| !c.is_whitespace())
+            .unwrap_or(rest.len());
+        let ws = &rest[..ws_end];
+        rest = &rest[ws_end..];
+        let word_end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
+        let word = &rest[..word_end];
+        rest = &rest[word_end..];
+        if word.is_empty() {
+            break;
+        }
+        let ws_len = ws.chars().count();
+        let word_len = word.chars().count();
+        if first_word {
+            out.push_str(ws);
+            out.push_str(word);
+            col += ws_len + word_len;
+            first_word = false;
+        } else if col + ws_len + word_len > width {
+            out.push('\n');
+            out.push_str(&indent_str);
+            out.push_str(word);
+            col = indent + word_len;
+        } else {
+            out.push_str(ws);
+            out.push_str(word);
+            col += ws_len + word_len;
+        }
+    }
+    out
 }
