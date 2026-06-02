@@ -13,7 +13,7 @@
 //! `crates/panache-formatter/tests/yaml_cross_validation.rs`. See
 //! `.claude/skills/yaml-formatter-cutover/SKILL.md` for scope.
 //!
-//! Phase 1.11 status: cross-validation harness live; rules 1
+//! Phase 1.12 status: cross-validation harness live; rules 1
 //! (canonical 2-space indent driven by entry/item nesting depth),
 //! 2 (sequence items indent +2 from parent key — carried by rule 1's
 //! depth math, no separate code), 3 (prefer double-quoted over
@@ -30,22 +30,28 @@
 //! entirely), 8 (one space before inline `#` comments), 10 (strip
 //! trailing whitespace per line), and 13 (exactly one trailing `\n`
 //! at EOF) implemented in [`document`]. All behavior-changing rules
-//! are now live; the remaining rules (4 block-scalar style,
-//! 9 comment positions, 11 empty scalars, 12 key order) are preserve
-//! rules with no code. Corpus covers trivially-canonical inputs,
+//! are live; preserve rules 4 (block-scalar style), 9 (comment
+//! positions), 11 (empty scalars), and 12 (key order) are locked in
+//! by corpus + unit tests with no formatter code (they cross-validate
+//! against pretty_yaml because both implementations leave these
+//! shapes alone). Corpus covers trivially-canonical inputs,
 //! trailing-newline + trailing-WS shape rules, rule-1 indent
 //! stressors, rule-2 parent-column sequences, rule-3 quote-style
 //! cases (single→double when safe; single kept for `\` / `'` / `"`
 //! content; conversion on keys + flow items), rule-5 flow-spacing
 //! cases, rule-6 overflow-wrap cases (depths 0/1/2, block-sequence
 //! parent shifts items +4, sequence-of-maps keeps nested flow
-//! canonical, just-at-80 boundary), rule-7 blank-line cases, and
-//! rule-8 inline-comment cases. Block scalar (`|`/`>`) interior
-//! lines are left verbatim — rule 1 needs a real block-scalar
-//! renderer to canonicalize them. Multi-line flow input (containing
-//! `\n` between brackets) is still rejected by the in-tree parser,
-//! so the "multi-line input is sticky" behavior pretty_yaml shows is
-//! parked until the parser supports it.
+//! canonical, just-at-80 boundary), rule-7 blank-line cases, rule-8
+//! inline-comment cases, rule-4 literal/folded + chomping indicator
+//! cases, rule-9 between-keys / between-seq-items / trailing-comment
+//! cases, rule-11 empty-scalar cases (bare, multiple, with inline
+//! comment, in sequence), and rule-12 key-order cases (reverse-alpha,
+//! deep nesting). Block scalar (`|`/`>`) interior lines are left
+//! verbatim — rule 1 needs a real block-scalar renderer to
+//! canonicalize them. Multi-line flow input (containing `\n` between
+//! brackets) is still rejected by the in-tree parser, so the
+//! "multi-line input is sticky" behavior pretty_yaml shows is parked
+//! until the parser supports it.
 
 #[path = "yaml/block_map.rs"]
 mod block_map;
@@ -357,6 +363,63 @@ mod tests {
             format_yaml("tags: ['foo', 'bar', baz]\n", &opts),
             "tags: [\"foo\", \"bar\", baz]\n"
         );
+    }
+
+    #[test]
+    fn rule_4_block_scalar_style_preserved() {
+        // Rule 4: literal `|` and folded `>` carry different YAML semantics
+        // and are not interchangeable. Chomping indicators (`-` / `+`) and
+        // indent indicators ride along with the header.
+        let opts = YamlFormatOptions::default();
+        let literal = "msg: |\n  line one\n  line two\n";
+        assert_eq!(format_yaml(literal, &opts), literal);
+        let folded = "msg: >\n  line one\n  line two\n";
+        assert_eq!(format_yaml(folded, &opts), folded);
+        let literal_strip = "msg: |-\n  line one\n  line two\n";
+        assert_eq!(format_yaml(literal_strip, &opts), literal_strip);
+        let folded_keep = "msg: >+\n  line one\n  line two\n";
+        assert_eq!(format_yaml(folded_keep, &opts), folded_keep);
+    }
+
+    #[test]
+    fn rule_9_comment_positions_preserved() {
+        // Rule 9: comments above keys, between items, and at document end
+        // are preserved at their original positions. Standalone-comment
+        // surrounding whitespace passes through (rule 8 only normalizes the
+        // single space before an inline `#`).
+        let opts = YamlFormatOptions::default();
+        let between_keys = "a: 1\n# between\nb: 2\n";
+        assert_eq!(format_yaml(between_keys, &opts), between_keys);
+        let between_seq_items = "items:\n  - foo\n  # mid\n  - bar\n";
+        assert_eq!(format_yaml(between_seq_items, &opts), between_seq_items);
+        let trailing = "key: value\n# trailing comment\n";
+        assert_eq!(format_yaml(trailing, &opts), trailing);
+        let blank_separated = "a: 1\n\n# section\nb: 2\n";
+        assert_eq!(format_yaml(blank_separated, &opts), blank_separated);
+    }
+
+    #[test]
+    fn rule_11_empty_scalars_preserved() {
+        // Rule 11: `key:` stays `key:`; never canonicalized to `key: null`
+        // or `key: ""`. An empty value in a sequence stays as a bare `-`.
+        let opts = YamlFormatOptions::default();
+        assert_eq!(format_yaml("key:\n", &opts), "key:\n");
+        assert_eq!(format_yaml("a:\nb:\nc: 1\n", &opts), "a:\nb:\nc: 1\n");
+        // An inline comment after an empty value keeps the empty.
+        assert_eq!(format_yaml("key: # comment\n", &opts), "key: # comment\n");
+    }
+
+    #[test]
+    fn rule_12_key_order_preserved() {
+        // Rule 12: frontmatter is user-written; reordering would surprise.
+        // Reverse-alphabetic input stays reverse-alphabetic; deep nesting
+        // doesn't re-sort either level.
+        let opts = YamlFormatOptions::default();
+        let reverse = "zebra: 1\nyak: 2\nape: 3\n";
+        assert_eq!(format_yaml(reverse, &opts), reverse);
+        let deep =
+            "root:\n  z: 1\n  a: 2\n  m: 3\nnested:\n  outer:\n    second: 2\n    first: 1\n";
+        assert_eq!(format_yaml(deep, &opts), deep);
     }
 
     #[test]

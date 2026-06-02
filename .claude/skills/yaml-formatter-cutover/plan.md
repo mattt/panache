@@ -26,12 +26,12 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
   on the in-tree parser landing multi-line flow); 1.11 rule 3 (convert
   single-quoted scalars to double-quoted when the de-escaped content
   has none of `\`, `'`, `"`, or ASCII control chars; plain stays plain;
-  double stays double). All behavior-changing rules now live. Remaining:
-  rule 4 (block scalar style — preserve, no code), 9 (comment
-  positions — preserve, no code), 11 (empty scalars — preserve, no
-  code), 12 (key order — preserve, no code). Phase 1 exit gated on
-  broadening the corpus (real frontmatter extracts) and the parser-side
-  enablement of multi-line flow input.
+  double stays double); 1.12 preserve-rule lockdown (rules 4 block-scalar
+  style, 9 comment positions, 11 empty scalars, 12 key order — no
+  formatter code, locked in by corpus + unit tests against pretty_yaml).
+  All thirteen rules now have corpus + unit coverage. Phase 1 exit gated
+  on broadening the corpus (real frontmatter extracts) and the
+  parser-side enablement of multi-line flow input.
 - **Phase 2 (joint cutover):** not started, blocked on Phase 1.
 - **Phase 3 (hashpipe extension):** not started, blocked on Phase 2.
 
@@ -39,6 +39,34 @@ matching the `scanner-rewrite.md` precedent in `yaml-shadow-expand/`.
 
 _(Update as phases complete. Earliest entries on top.)_
 
+- **Phase 1.12 — preserve-rule lockdown (rules 4, 9, 11, 12).** No
+  formatter code; locks in the four spec rules that explicitly decline
+  to canonicalize a semantically-meaningful user choice by giving each
+  corpus + unit coverage that cross-validates against pretty_yaml.
+  Eleven new corpus cases. Under
+  `tests/fixtures/yaml_corpus/block_scalars/`: `literal_preserved`,
+  `folded_preserved`, `literal_strip`, `folded_keep`, `literal_in_seq`,
+  `folded_then_literal` — exercise `|`, `>`, `|-`, `>+`, and mixed
+  literal/folded usage in both block-map values and block-sequence
+  items. Under `comments/`: `between_keys`, `between_seq_items`,
+  `trailing_doc_comment`, `blank_separated_section` — exercise rule
+  9's position-preservation at the doc-end, between map keys, between
+  sequence items, and across a blank-line section boundary. Under
+  `empty_values/`: `bare_empty`, `multiple_empties`,
+  `empty_with_inline_comment`, `empty_in_sequence` — exercise rule
+  11's no-`null` canonicalization across bare, stacked, comment-
+  trailed, and sequence-position empties. Under `key_order/`:
+  `reverse_alpha_preserved`, `numeric_like_keys_preserved`,
+  `deep_order_preserved` — exercise rule 12 with reverse-alphabetic
+  top-level keys, quoted numeric keys (avoids stringification
+  surprises), and reverse order at two nesting levels. Four new unit
+  tests in `yaml.rs` (`rule_4_block_scalar_style_preserved`,
+  `rule_9_comment_positions_preserved`,
+  `rule_11_empty_scalars_preserved`, `rule_12_key_order_preserved`)
+  lock the behavior at the API level so a future regression doesn't
+  ride along with a pretty_yaml regression silently. yaml.rs module
+  doc-comment bumped to 1.12 with the preserve-rule note. No
+  live-pipeline changes.
 - **Phase 1.11 — rule 3 (quote-style preference).** Added
   `try_convert_single_to_double` to
   `crates/panache-formatter/src/formatter/yaml/document.rs::emit_token`.
