@@ -624,6 +624,7 @@ golden_test_cases!(
     wikilinks_both_enabled,
     yaml_metadata,
     yaml_metadata_dots_closer,
+    yaml_metadata_embedded_subtree,
     yaml_metadata_normalization,
     yaml_metadata_opening_blank_not_metadata,
 );

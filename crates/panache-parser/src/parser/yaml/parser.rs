@@ -31,6 +31,7 @@
 
 #![allow(dead_code)]
 
+use crate::parser::utils::tree_copy::copy_green_node;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use rowan::GreenNodeBuilder;
 
@@ -122,39 +123,17 @@ pub fn parse_yaml_report(input: &str) -> YamlParseReport {
     }
 
     let stream = parse_stream(input);
+    let stream_green = stream.green().into_owned();
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::DOCUMENT.into());
     builder.start_node(SyntaxKind::YAML_METADATA_CONTENT.into());
-    let stream_green = stream.green().into_owned();
-    builder.start_node(SyntaxKind::YAML_STREAM.into());
-    for child in stream_green.children() {
-        match child {
-            rowan::NodeOrToken::Node(n) => {
-                push_green_node(&mut builder, n);
-            }
-            rowan::NodeOrToken::Token(t) => {
-                builder.token(t.kind(), t.text());
-            }
-        }
-    }
-    builder.finish_node(); // YAML_STREAM
+    copy_green_node(&mut builder, &stream_green);
     builder.finish_node(); // YAML_METADATA_CONTENT
     builder.finish_node(); // DOCUMENT
     YamlParseReport {
         tree: Some(SyntaxNode::new_root(builder.finish())),
         diagnostics: Vec::new(),
     }
-}
-
-fn push_green_node(builder: &mut GreenNodeBuilder<'_>, node: &rowan::GreenNodeData) {
-    builder.start_node(node.kind());
-    for child in node.children() {
-        match child {
-            rowan::NodeOrToken::Node(n) => push_green_node(builder, n),
-            rowan::NodeOrToken::Token(t) => builder.token(t.kind(), t.text()),
-        }
-    }
-    builder.finish_node();
 }
 
 /// Drive the scanner over `input` and build a CST. Always returns a

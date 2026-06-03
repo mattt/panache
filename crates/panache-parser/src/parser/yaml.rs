@@ -36,6 +36,7 @@ pub use parser::{
 };
 pub(crate) use scanner::ScalarStyle;
 pub use scanner::{ShadowScannerReport, shadow_scanner_check};
+pub(crate) use validator::validate_yaml;
 
 #[doc(hidden)]
 pub fn validate_yaml_for_test(input: &str) -> Option<YamlDiagnostic> {
