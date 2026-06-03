@@ -44,7 +44,7 @@ use panache_parser::SyntaxNode;
 use panache_parser::syntax::{SyntaxKind, SyntaxToken};
 use rowan::{TextSize, TokenAtOffset};
 
-use super::options::YamlFormatOptions;
+use super::options::{WrapMode, YamlFormatOptions};
 
 /// Render the given CST root into a string. The root is expected to be
 /// the `DOCUMENT` node returned by
@@ -704,12 +704,22 @@ fn parent_content_col(node: &SyntaxNode) -> usize {
 /// the scalar to skip wrap — keeping the algorithm simple and matching
 /// pretty_yaml on the cases that actually appear in the corpus.
 ///
+/// Gated on [`WrapMode::Always`]: under [`WrapMode::Preserve`] plain
+/// scalars are left on their original line regardless of width, matching
+/// pretty_yaml's `ProseWrap::Preserve`. (Flow-container wrapping in
+/// [`apply_flow_wrap`] is *not* gated — pretty_yaml wraps overflowing
+/// flow collections under both prose-wrap modes, since that is a
+/// print-width concern rather than prose wrapping.)
+///
 /// Implementation: re-parse the post-flow-wrap buffer, walk
 /// `YAML_BLOCK_MAP_VALUE` nodes, identify single-line plain scalars
 /// whose line exceeds `line_width`, and rewrite each scalar with
 /// `replace_range` (reverse byte order, so earlier offsets remain
 /// valid).
 fn apply_plain_scalar_wrap(buf: String, opts: &YamlFormatOptions) -> String {
+    if opts.wrap == WrapMode::Preserve {
+        return buf;
+    }
     let Some(tree) = panache_parser::parser::yaml::parse_yaml_tree(&buf) else {
         return buf;
     };

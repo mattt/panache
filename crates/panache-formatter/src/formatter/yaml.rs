@@ -1,4 +1,4 @@
-//! In-tree YAML formatter (shadow, Phase 1 of the cutover plan).
+//! In-tree YAML formatter (live as of Phase 2a of the cutover plan).
 //!
 //! Consumes the in-tree parser CST
 //! ([`panache_parser::parser::yaml::parse_yaml_tree`]) and emits
@@ -6,11 +6,14 @@
 //! `STYLE.md` (next to this file) — the canonical spec, relocated
 //! from `.claude/skills/yaml-formatter-cutover/plan.md` in Phase 1.2.
 //!
-//! **Not wired into the live formatting pipeline.** Until the joint
-//! cutover lands (Phase 2), live YAML output still routes through
-//! [`crate::yaml_engine`] → `pretty_yaml`. This module is
-//! cross-validated against pretty_yaml on a corpus by
-//! `crates/panache-formatter/tests/yaml_cross_validation.rs`. See
+//! **Live as of Phase 2a.** [`crate::yaml_engine::format_yaml_with_config`]
+//! (and the host `src/yaml_engine.rs` copy) now route live YAML output
+//! through [`format_yaml`] instead of `pretty_yaml::format_text`; both
+//! plain frontmatter and hashpipe option bodies share that chokepoint.
+//! `pretty_yaml` remains only as the cross-validation reference in
+//! `crates/panache-formatter/tests/yaml_cross_validation.rs`. The
+//! `yaml_parser` crate is still used for value extraction and the
+//! CST/diagnostics bridge (Phase 2b). See
 //! `.claude/skills/yaml-formatter-cutover/SKILL.md` for scope.
 //!
 //! Phase 1.15b status: cross-validation harness live; rules 1
@@ -88,10 +91,11 @@ pub use options::{WrapMode, YamlFormatOptions};
 /// Format the given YAML source under the in-tree formatter.
 ///
 /// On a parse error (input the in-tree parser rejects outright),
-/// returns the input verbatim. The cross-validation harness treats
-/// that as a "skip" case — pretty_yaml also passes its input through
-/// on its own rejection path, and a shadow formatter shouldn't be
-/// the thing that surfaces parse errors.
+/// returns the input verbatim — the live `yaml_engine` gate validates
+/// before calling, so this is the safe fallback when the two parsers
+/// disagree, and the formatter shouldn't be the thing that surfaces
+/// parse errors. The cross-validation harness treats it as a "skip"
+/// case (pretty_yaml also passes its input through on rejection).
 pub fn format_yaml(input: &str, opts: &YamlFormatOptions) -> String {
     match panache_parser::parser::yaml::parse_yaml_tree(input) {
         Some(tree) => document::render(&tree, opts),
@@ -588,6 +592,34 @@ mod tests {
         let opts = YamlFormatOptions::default();
         let seq = "outer:\n  - This is a long sequence item value that would otherwise wrap onto a second line\n";
         assert_eq!(format_yaml(seq, &opts), seq);
+    }
+
+    #[test]
+    fn preserve_wrap_mode_leaves_plain_scalar_unwrapped() {
+        // WrapMode::Preserve mirrors pretty_yaml's ProseWrap::Preserve:
+        // an overflowing plain block-map scalar stays on its line. Flow
+        // containers are NOT prose, so they still wrap under Preserve
+        // (print-width concern), matching pretty_yaml.
+        let input = "tbl-cap: This is a long caption that should wrap onto multiple lines because it exceeds the line width of eighty.\n";
+        let preserve = YamlFormatOptions {
+            line_width: 80,
+            wrap: WrapMode::Preserve,
+        };
+        let always = YamlFormatOptions {
+            line_width: 80,
+            wrap: WrapMode::Always,
+        };
+        assert_eq!(format_yaml(input, &preserve), input);
+        assert_ne!(format_yaml(input, &always), input);
+
+        // Flow sequence wraps under both modes.
+        let flow = "tags: [alpha, bravo, charlie, delta, echo, foxtrot, golf, hotel, india, juliet, kilo, lima]\n";
+        let flow_preserve = format_yaml(flow, &preserve);
+        assert!(
+            flow_preserve.contains("[\n"),
+            "flow should wrap under Preserve: {flow_preserve:?}"
+        );
+        assert_eq!(format_yaml(flow, &always), flow_preserve);
     }
 
     #[test]
